@@ -28,257 +28,87 @@ from mathutils import Vector, Matrix, Quaternion, Euler, Color
 from .utils_python import issubclass_safe
 from .utils_text import compress_whitespace
 
-#============================================================================#
-
 # TODO: update to match the current API!
 # TODO: documentation
 
-bl_common_attrs = {'bl_idname', 'bl_label', 'bl_description', 'bl_options',
-    'bl_context', 'bl_region_type', 'bl_space_type', 'bl_use_postprocess',
-    'bl_use_preview', 'bl_use_shading_nodes', 'is_animation', 'is_preview'}
-
-"""
-bl_idname:
-    The name by which operator/panel/menu can be accessed;
-    e.g. 'mesh.primitive_cube_add' can be
-    invoked with bpy.ops.mesh.primitive_cube_add().
-
-bl_label:
-    The text that's displayed as operator name,
-    menu entry name of panel header.
-
-bl_description:
-    The tooltip that's displayed when mouse is hovered
-    over the operator button, menu entry or panel.
-    When bl_description is not set, the docstring
-    (__doc__ attribute) is used instead.
-"""
-
-bl_options = {
-    "Operator":{
-        # default is {'REGISTER'}
-        'REGISTER',
-            # Register, Display in the info window and support
-            # the redo toolbar panel.
-        'UNDO',
-            # Undo, Push an undo event (needed for operator redo).
-        'BLOCKING',
-            # Blocking, Block anything else from using the cursor.
-        'MACRO',
-            # Macro, Use to check if an operator is a macro.
-        'GRAB_POINTER',
-            # Grab Pointer, Use so the operator grabs the mouse
-            # focus, enables wrapping when continuous grab is enabled.
-        'PRESET',
-            # Preset, Display a preset button with the operators settings.
-        'INTERNAL',
-            # Internal, Removes the operator from search results.
-    },
-    "Panel":{
-        # default is {'DEFAULT_CLOSED'}
-        'DEFAULT_CLOSED',
-            # Default Closed, Defines if the panel has
-            # to be open or collapsed at the time of its creation.
-        'HIDE_HEADER',
-            # Show Header, If set to True, the panel shows
-            # a header, which contains a clickable arrow to collapse
-            # the panel and the label (see bl_label).
-    },
-    "Menu":{
-    },
-    "Header":{
-    },
-    "KeyingSetInfo":{
-        'INSERTKEY_NEEDED',
-            # Insert Keyframes - Only Needed, Only insert keyframes
-            # where they’re needed in the relevant F-Curves.
-        'INSERTKEY_VISUAL',
-            # Insert Keyframes - Visual, Insert keyframes based on
-            # ‘visual transforms’.
-        'INSERTKEY_XYZ_TO_RGB',
-            # F-Curve Colors - XYZ to RGB, Color for newly added
-            # transformation F-Curves (Location, Rotation, Scale)
-            # and also Color is based on the transform axis.
-    },
-    "RenderEngine":{
-    },
-    "PropertyGroup":{
-    },
-}
-
-bl_region_types = {
-    # default is 'WINDOW'
-    'WINDOW', 'HEADER', 'CHANNELS', 'TEMPORARY', 'UI', 'TOOLS',
-    'TOOL_PROPS', 'PREVIEW'
-}
-
-bl_space_types = {
-    # default is 'EMPTY'
-    'EMPTY', 'VIEW_3D', 'GRAPH_EDITOR', 'OUTLINER', 'PROPERTIES', 'INFO',
-    'CONSOLE', 'NLA_EDITOR', 'TIMELINE', 'FILE_BROWSER', 'IMAGE_EDITOR',
-    'TEXT_EDITOR', 'DOPESHEET_EDITOR', 'SEQUENCE_EDITOR', 'NODE_EDITOR',
-    'LOGIC_EDITOR', 'USER_PREFERENCES', 'CLIP_EDITOR'
-}
-
-bl_modes = {
-    'EDIT_MESH', 'EDIT_CURVE', 'EDIT_SURFACE', 'EDIT_TEXT',
-    'EDIT_ARMATURE', 'EDIT_METABALL', 'EDIT_LATTICE', 'POSE',
-    'SCULPT', 'PAINT_WEIGHT', 'PAINT_VERTEX', 'PAINT_TEXTURE',
-    'PARTICLE', 'OBJECT'
-}
-
-bl_context_to_mode = {
-    "mesh_edit":'EDIT_MESH',
-    "curve_edit":'EDIT_CURVE',
-    "surface_edit":'EDIT_SURFACE',
-    "text_edit":'EDIT_TEXT',
-    "armature_edit":'EDIT_ARMATURE',
-    "mball_edit":'EDIT_METABALL',
-    "lattice_edit":'EDIT_LATTICE',
-    "posemode":'POSE',
-    "sculpt_mode":'SCULPT',
-    "weightpaint":'PAINT_WEIGHT',
-    "vertexpaint":'PAINT_VERTEX',
-    "texturepaint":'PAINT_TEXTURE',
-    "particlemode":'PARTICLE',
-    "objectmode":'OBJECT',
-}
-
-bl_contexts = {
-    # actually, bl_context for VIEW_3D space is completely ignored!
-    'VIEW_3D':{
-        "mesh_edit", "curve_edit", "surface_edit", "text_edit",
-        "armature_edit", "mball_edit", "lattice_edit", "posemode",
-        "sculpt_mode", "weightpaint", "vertexpaint", "texturepaint",
-        "particlemode", "objectmode"
-    },
-    'PROPERTIES':{
-        "object", "data", "material", "physics", "constraint",
-        "particle", "render", "scene", "texture", "world"
-    },
-}
-
-bpy_types_data = {
-    'Action':'actions',
-    'Armature':'armatures',
-    'Brush':'brushes',
-    'Camera':'cameras',
-    'Curve':'curves',
-    'VectorFont':'fonts',
-    'GreasePencil':'grease_pencil',
-    'Group':'groups',
-    'Image':'images',
-    'Lamp':'lamps',
-    'Lattice':'lattices',
-    'Library':'libraries',
-    'Material':'materials',
-    'Mesh':'meshes',
-    'MetaBall':'metaballs',
-    'MovieClip':'movieclips',
-    'NodeTree':'node_groups',
-    'Object':'objects',
-    'ParticleSettings':'particles',
-    'Scene':'scenes',
-    'Screen':'screens',
-    'Key':'shape_keys',
-    'Sound':'sounds',
-    'Speaker':'speakers',
-    'Text':'texts',
-    'Texture':'textures',
-    'WindowManager':'window_managers',
-    'World':'worlds',
-}
-
-bpy_data_types = {
-    'actions':'Action',
-    'armatures':'Armature',
-    'brushes':'Brush',
-    'cameras':'Camera',
-    'curves':'Curve',
-    'fonts':'VectorFont',
-    'grease_pencil':'GreasePencil',
-    'groups':'Group',
-    'images':'Image',
-    'lamps':'Lamp',
-    'lattices':'Lattice',
-    'libraries':'Library',
-    'materials':'Material',
-    'meshes':'Mesh',
-    'metaballs':'MetaBall',
-    'movieclips':'MovieClip',
-    'node_groups':'NodeTree',
-    'objects':'Object',
-    'particles':'ParticleSettings',
-    'scenes':'Scene',
-    'screens':'Screen',
-    'shape_keys':'Key',
-    'sounds':'Sound',
-    'speakers':'Speaker',
-    'texts':'Text',
-    'textures':'Texture',
-    'window_managers':'WindowManager',
-    'worlds':'World',
-}
-
-bl_icons = list(bpy.types.UILayout.bl_rna.functions['prop'].parameters['icon'].enum_items.keys())
-
 #============================================================================#
 
-# TODO: update to match the current API
-# TODO: documentation
-
-class BoolItem(bpy.types.PropertyGroup):
-    value = bpy.props.BoolProperty()
-bpy.utils.register_class(BoolItem)
-
-class IntItem(bpy.types.PropertyGroup):
-    value = bpy.props.IntProperty()
-bpy.utils.register_class(IntItem)
-
-class FloatItem(bpy.types.PropertyGroup):
-    value = bpy.props.FloatProperty()
-bpy.utils.register_class(FloatItem)
-
-class StringItem(bpy.types.PropertyGroup):
-    value = bpy.props.StringProperty()
-bpy.utils.register_class(StringItem)
-
-class ColorItem(bpy.types.PropertyGroup):
-    value = bpy.props.FloatVectorProperty(subtype='COLOR')
-bpy.utils.register_class(ColorItem)
-
-class EulerItem(bpy.types.PropertyGroup):
-    value = bpy.props.FloatVectorProperty(subtype='EULER')
-bpy.utils.register_class(EulerItem)
-
-class QuaternionItem(bpy.types.PropertyGroup):
-    value = bpy.props.FloatVectorProperty(subtype='QUATERNION')
-bpy.utils.register_class(QuaternionItem)
-
-class Matrix3Item(bpy.types.PropertyGroup):
-    value = bpy.props.FloatVectorProperty(subtype='MATRIX', size=9)
-bpy.utils.register_class(Matrix3Item)
-
-class Matrix4Item(bpy.types.PropertyGroup):
-    value = bpy.props.FloatVectorProperty(subtype='MATRIX', size=16)
-bpy.utils.register_class(Matrix4Item)
-
-class Vector2Item(bpy.types.PropertyGroup):
-    value = bpy.props.FloatVectorProperty(subtype='XYZ', size=2)
-bpy.utils.register_class(Vector2Item)
-
-class Vector3Item(bpy.types.PropertyGroup):
-    value = bpy.props.FloatVectorProperty(subtype='XYZ', size=3)
-bpy.utils.register_class(Vector3Item)
-
-class Vector4Item(bpy.types.PropertyGroup):
-    value = bpy.props.FloatVectorProperty(subtype='XYZ', size=4)
-bpy.utils.register_class(Vector4Item)
+class BlEnums:
+    common_attrs = {'bl_idname', 'bl_label', 'bl_description', 'bl_options',
+        'bl_context', 'bl_region_type', 'bl_space_type', 'bl_use_postprocess',
+        'bl_use_preview', 'bl_use_shading_nodes', 'is_animation', 'is_preview',
+        'bl_width_default', 'bl_width_max', 'bl_width_min',
+        'bl_height_default', 'bl_height_max', 'bl_height_min'}
+    
+    options = {tn:{item.identifier for item in getattr(bpy.types, tn).bl_rna.properties["bl_options"].enum_items}
+        for tn in ("KeyingSet", "KeyingSetInfo", "KeyingSetPath", "Macro", "Operator", "Panel")}
+    
+    space_types = {item.identifier for item in bpy.types.Space.bl_rna.properties["type"].enum_items}
+    region_types = {item.identifier for item in bpy.types.Region.bl_rna.properties["type"].enum_items}
+    
+    modes = {item.identifier for item in bpy.types.Context.bl_rna.properties["mode"].enum_items}
+    
+    # Panel.bl_context is not a enum property, so we can't get all possible values through introspection
+    panel_contexts = {
+        'VIEW_3D':{
+            "mesh_edit":'EDIT_MESH',
+            "curve_edit":'EDIT_CURVE',
+            "surface_edit":'EDIT_SURFACE',
+            "text_edit":'EDIT_TEXT',
+            "armature_edit":'EDIT_ARMATURE',
+            "mball_edit":'EDIT_METABALL',
+            "lattice_edit":'EDIT_LATTICE',
+            "posemode":'POSE',
+            "sculpt_mode":'SCULPT',
+            "weightpaint":'PAINT_WEIGHT',
+            "vertexpaint":'PAINT_VERTEX',
+            "texturepaint":'PAINT_TEXTURE',
+            "particlemode":'PARTICLE',
+            "objectmode":'OBJECT',
+        },
+        'PROPERTIES':{
+            "object", "data", "material", "physics", "constraint",
+            "particle", "render", "scene", "texture", "world"
+        },
+    }
+    
+    data_types = {
+        'actions':'Action',
+        'armatures':'Armature',
+        'brushes':'Brush',
+        'cameras':'Camera',
+        'curves':'Curve',
+        'fonts':'VectorFont',
+        'grease_pencil':'GreasePencil',
+        'groups':'Group',
+        'images':'Image',
+        'lamps':'Lamp',
+        'lattices':'Lattice',
+        'libraries':'Library',
+        'linestyles':'FreestyleLineStyle',
+        'masks':'Mask',
+        'materials':'Material',
+        'meshes':'Mesh',
+        'metaballs':'MetaBall',
+        'movieclips':'MovieClip',
+        'node_groups':'NodeTree',
+        'objects':'Object',
+        'particles':'ParticleSettings',
+        'scenes':'Scene',
+        'screens':'Screen',
+        'shape_keys':'Key',
+        'sounds':'Sound',
+        'speakers':'Speaker',
+        'texts':'Text',
+        'textures':'Texture',
+        'window_managers':'WindowManager',
+        'worlds':'World',
+    }
+    types_data = {v:k for k, v in data_types.items()}
+    
+    icons = list(bpy.types.UILayout.bl_rna.functions['prop'].parameters['icon'].enum_items.keys())
 
 #============================================================================#
-
-# TODO: update to match the current API!
-# TODO: documentation
 
 class BlRna:
     rna_to_bpy = {
@@ -354,6 +184,8 @@ class BlRna:
         if hasattr(rna_prop, "array_length"):
             if rna_prop.array_length == 0:
                 return value == rna_prop.default
+            if isinstance(value, Matrix):
+                value = itertools.chain(*value)
             return tuple(rna_prop.default_array) == tuple(value)
         elif type_id == "StringProperty":
             return value == rna_prop.default
@@ -499,6 +331,8 @@ class BlRna:
         elif class_name == "bpy_prop_collection_idprop":
             value = [BlRna.serialize_value(item, recursive) for item in value]
         return value
+
+#============================================================================#
 
 class BpyProp:
     """Utility class for easy inspection/modification of bpy properties"""
@@ -717,9 +551,9 @@ class BpyProp:
         """Create an equivalent bpy.props.* structure"""
         return (self.type, self.args.copy() if copy else self.args)
     
-    # Extra attributes are useful to store custom callbacks and various metadata
+    # Extra attributes are useful to store custom callbacks and various metadata.
     # The only bpy.props arguments that allow adding extra information are "update/get/set" callbacks,
-    # so here we use "update" (the only type of property that has no callbacks is CollectionProperty)
+    # so here we use "update" (the only type of property that has no callbacks is CollectionProperty).
     
     def _lenextra(self):
         extra = self.args.get("update")
@@ -886,7 +720,32 @@ class BpyOp:
     def prop_info(self, name):
         return BpyProp(getattr(self.type, name))
 
-# ===== PROP ===== #
+# ===== PRIMITIVE ITEMS & PROP ===== #
+
+PrimitiveItem = [
+    ("Bool", "Bool", dict()),
+    ("Int", "Int", dict()),
+    ("Float", "Float", dict()),
+    ("String", "String", dict()),
+    ("Color", "FloatVector", dict(subtype='COLOR', size=3)),
+    ("Euler", "FloatVector", dict(subtype='EULER', size=3)),
+    ("Quaternion", "FloatVector", dict(subtype='QUATERNION', size=4)),
+    ("Matrix3", "FloatVector", dict(subtype='MATRIX', size=9)),
+    ("Matrix4", "FloatVector", dict(subtype='MATRIX', size=16)),
+    ("Vector2", "FloatVector", dict(subtype='XYZ', size=2)),
+    ("Vector3", "FloatVector", dict(subtype='XYZ', size=3)),
+    ("Vector4", "FloatVector", dict(subtype='XYZ', size=4)),
+]
+PrimitiveItem = type("PrimitiveItem", (object,), {
+    n:type(n, (bpy.types.PropertyGroup,), {"value":getattr(bpy.props, p+"Property")(**d)})
+    for n, p, d in PrimitiveItem
+})
+# Seems like class registration MUST be done in global namespace
+for item_name in dir(PrimitiveItem):
+    if not item_name.startswith("_"):
+        bpy.utils.register_class(getattr(PrimitiveItem, item_name))
+del item_name
+
 class prop:
     """
     A syntactic sugar for more concise bpy properties declaration.
@@ -975,32 +834,32 @@ class prop:
     }
     
     types_item_instance = {
-        bool:BoolItem,
-        int:IntItem,
-        float:FloatItem,
-        str:StringItem,
-        Color:ColorItem,
-        Euler:EulerItem,
-        Quaternion:QuaternionItem,
-        Matrix:(None, None, Matrix3Item, Matrix4Item),
-        Vector:(None, Vector2Item, Vector3Item, Vector4Item),
+        bool:PrimitiveItem.Bool,
+        int:PrimitiveItem.Int,
+        float:PrimitiveItem.Float,
+        str:PrimitiveItem.String,
+        Color:PrimitiveItem.Color,
+        Euler:PrimitiveItem.Euler,
+        Quaternion:PrimitiveItem.Quaternion,
+        Matrix:(None, None, PrimitiveItem.Matrix3, PrimitiveItem.Matrix4),
+        Vector:(None, PrimitiveItem.Vector2, PrimitiveItem.Vector3, PrimitiveItem.Vector4),
     }
     
     types_item_class = {
-        bool:BoolItem,
-        int:IntItem,
-        float:FloatItem,
-        str:StringItem,
-        Color:ColorItem,
-        Euler:EulerItem,
-        Quaternion:QuaternionItem,
-        Matrix:Matrix4Item,
-        Matrix.to_3x3:Matrix3Item,
-        Matrix.to_4x4:Matrix4Item,
-        Vector:Vector3Item,
-        Vector.to_2d:Vector2Item,
-        Vector.to_3d:Vector3Item,
-        Vector.to_4d:Vector4Item,
+        bool:PrimitiveItem.Bool,
+        int:PrimitiveItem.Int,
+        float:PrimitiveItem.Float,
+        str:PrimitiveItem.String,
+        Color:PrimitiveItem.Color,
+        Euler:PrimitiveItem.Euler,
+        Quaternion:PrimitiveItem.Quaternion,
+        Matrix:PrimitiveItem.Matrix4,
+        Matrix.to_3x3:PrimitiveItem.Matrix3,
+        Matrix.to_4x4:PrimitiveItem.Matrix4,
+        Vector:PrimitiveItem.Vector3,
+        Vector.to_2d:PrimitiveItem.Vector2,
+        Vector.to_3d:PrimitiveItem.Vector3,
+        Vector.to_4d:PrimitiveItem.Vector4,
     }
     
     def parse_arguments(self, value, kwargs):
@@ -1009,7 +868,9 @@ class prop:
         
         err_msg = "Unexpected property value {}; impossible to infer property type".format(repr(value))
         
-        if issubclass_safe(value, bpy.types.PropertyGroup): # a = SomePG | prop()
+        if BpyProp.validate(value):
+            value_target = None
+        elif issubclass_safe(value, bpy.types.PropertyGroup): # a = SomePG | prop()
             bpy_type = bpy.props.PointerProperty
             value_target = "type"
             if hasattr(value, "_IDBlockSelector"):
@@ -1065,12 +926,14 @@ class prop:
         else:
             raise TypeError(err_msg)
         
-        if value is None:
-            kwargs.pop(value_target, None)
+        if value_target is not None:
+            if value is None:
+                kwargs.pop(value_target, None)
+            else:
+                kwargs[value_target] = value
+            prop_info = BpyProp((bpy_type, {}), True)
         else:
-            kwargs[value_target] = value
-        
-        prop_info = BpyProp((bpy_type, {}), True)
+            prop_info = BpyProp(value, True)
         prop_info.update(kwargs) # we need this for correct handling of extra attributes
         
         return prop_info()

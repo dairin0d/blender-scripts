@@ -33,10 +33,8 @@ from bpy_extras.view3d_utils import (
 
 import math
 
-from .utils_math import matrix_LRS, angle_signed, snap_pixel_vector
+from .utils_math import matrix_LRS, angle_signed, snap_pixel_vector, lerp
 from .utils_ui import calc_region_rect
-
-# TODO: make (clickable_)region_rect dynamically calculatable (a function?)
 
 class SmartView3D:
     def __init__(self, context=None):
@@ -138,8 +136,10 @@ class SmartView3D:
     
     def __get(self):
         value = self.camera_offset
-        return Vector((value.x * self.region.width, value.y * self.region.height))
+        value = Vector((value.x * self.region.width, value.y * self.region.height))
+        return value * self.camera_zoom_scale
     def __set(self, value):
+        value = value * (1.0 / self.camera_zoom_scale)
         value = Vector((value.x / self.region.width, value.y / self.region.height))
         self.camera_offset = value
     camera_offset_pixels = property(__get, __set)
@@ -150,17 +150,15 @@ class SmartView3D:
         self.region_data.view_camera_zoom = value
     camera_zoom = property(__get, __set)
     
+    # See source\blender\blenkernel\intern\screen.c
     def __get(self):
-        z = self.camera_zoom / 30.0
-        z = ((0.5*z + 1.0) if z >= 0 else (1.0/(0.4*z*z - 0.2*z + 1.0)))
-        return z
-    def __set(self, z):
-        if z >= 0:
-            z = (z - 1.0) / 0.5
-        else: # solve quadratic equation
-            a, b, c = 0.4, -0.2, (1.0 - (1.0 / z))
-            z = (-b - math.sqrt(b*b - 4*a*c)) / (2*a)
-        self.camera_zoom = z * 30.0
+        # BKE_screen_view3d_zoom_to_fac magic formula
+        value = math.pow(math.sqrt(2.0) + self.camera_zoom / 50.0, 2.0) / 4.0
+        return value * 2 # using Blender's formula, at 0 the result is 0.5
+    def __set(self, value):
+        value *= 0.5
+        # BKE_screen_view3d_zoom_from_fac magic formula
+        self.camera_zoom = (math.sqrt(4.0 * value) - math.sqrt(2.0)) * 50.0
     camera_zoom_scale = property(__get, __set)
     
     def __get(self):
@@ -533,25 +531,34 @@ class SmartView3D:
         return (-self.clip_end*0.5, self.clip_end*0.5, self.focus)
     zbuf_range = property(__get)
     
+    def z_distance(self, pos, clamp_near=None, clamp_far=None):
+        if clamp_far is None:
+            clamp_far = clamp_near
+        
+        near, far, origin = self.zbuf_range
+        dist = (pos - origin).dot(self.forward)
+        
+        if self.is_perspective:
+            if clamp_near is not None:
+                dist = max(dist, near * (1.0 + clamp_near))
+            if clamp_far is not None:
+                dist = min(dist, far * (1.0 - clamp_far))
+        else:
+            if clamp_near is not None:
+                dist = max(dist, lerp(near, far, clamp_near))
+            if clamp_far is not None:
+                dist = min(dist, lerp(far, near, clamp_far))
+        
+        return dist
+    
     def region_rect(self, overlap=True):
         return calc_region_rect(self.area, self.region, overlap)
     
     def __get(self):
-        # TODO: find the formulas to calculate this using camera_offset & camera_zoom
-        region_size = Vector((self.region.width, self.region.height))
-        region_center = region_size * 0.5
-        
-        focus_proj = self.project(self.focus)
-        if focus_proj is None:
-            return None
-        
-        region_center = Vector((self.region.width*0.5, self.region.height*0.5))
-        if self.is_camera and (not self.is_perspective): # Somewhy Blender behaves like this
-            focus_proj = region_center # in case camera has non-zero shift
-        elif (focus_proj - region_center).magnitude < 2:
-            focus_proj = region_center
-        
-        return focus_proj
+        region_center = Vector((self.region.width, self.region.height)) * 0.5
+        if self.is_camera and (not self.is_perspective):
+            return region_center # Somewhy Blender behaves like this
+        return region_center - self.camera_offset_pixels
     focus_projected = property(__get)
     
     del __get

@@ -32,24 +32,11 @@ from .utils_python import ensure_baseclass, PrimitiveLock, AttributeHolder
 from .utils_text import compress_whitespace
 from .utils_ui import messagebox, NestedLayout
 from .utils_accumulation import prop_accumulator
-from .bpy_inspect import (
-    BpyProp, prop,
-    bl_common_attrs,
-    bl_options,
-    bl_region_types,
-    bl_space_types,
-    bl_modes,
-    bl_context_to_mode,
-    bl_contexts,
-    bpy_types_data,
-    bpy_data_types,
-)
+from .bpy_inspect import BpyProp, prop, BlEnums
 
 #============================================================================#
 
-bpy_struct_contains = bpy.types.PropertyGroup.__contains__
-bpy_struct_getitem = bpy.types.PropertyGroup.__getitem__
-bpy_struct_setitem = bpy.types.PropertyGroup.__setitem__
+# TODO: addon preferences
 
 # ===== ADDON MANAGER ===== #
 class AddonManager:
@@ -72,14 +59,14 @@ class AddonManager:
             f_globals = [fr[0].f_globals for fr in inspect.stack()]
             for g in reversed(f_globals):
                 if not main_path:
-                    main_path = g.get("__file__")
+                    main_path = g.get("__file__", "")
                     _path = main_path
                     _name = os.path.basename(_path)
                     _name = os.path.splitext(_name)[0]
                 
                 info = g.get("bl_info")
                 if info:
-                    _path = g.get("__file__")
+                    _path = g.get("__file__", "")
                     _name = info.get("name", _name)
                     break
             
@@ -130,11 +117,9 @@ class AddonManager:
         
         self.attributes = {}
         
-        self.External = self.PropertyGroup(type(
-            "%s external storage" % self.name, (), {}))
+        self.External = self.PropertyGroup(type("%s external storage" % self.name, (), {}))
         
-        self.Internal = self.PropertyGroup(type(
-            "%s internal storage" % self.name, (), {}))
+        self.Internal = self.PropertyGroup(type("%s internal storage" % self.name, (), {}))
         
         setattr(self.Internal, self._ID_counter_key, 0 | prop())
         
@@ -145,10 +130,7 @@ class AddonManager:
     @classmethod
     def external_attr(cls, name):
         wm = bpy.data.window_managers[0]
-        try:
-            return getattr(wm, name)
-        except AttributeError:
-            return None
+        return getattr(wm, name, None)
     
     @classmethod
     def internal_attr(cls, name):
@@ -163,14 +145,9 @@ class AddonManager:
                     if cls._screen_mark in screen:
                         cls._screen_name = screen.name
                         break
-            
             # Make sure it is marked as "our"
             screen[cls._screen_mark] = True
-        
-        try:
-            return getattr(screen, name)
-        except AttributeError:
-            return None
+        return getattr(screen, name, None)
     
     @property
     def external(self):
@@ -231,9 +208,6 @@ class AddonManager:
         
         data = BpyProp.serialize(obj)
         
-        if not data:
-            return # Nothing to save
-        
         text = json.dumps(data, indent=2)
         
         path = self.storage_path
@@ -293,7 +267,7 @@ class AddonManager:
         properties as well. In this case, UUID conflicts are possible.
         """
         
-        # obj is expected to have the according property defined;
+        # obj is expected to have the corresponding property defined;
         # if not, then storage request is a mistake
         ID = getattr(obj, self.UUID_key)
         
@@ -301,9 +275,8 @@ class AddonManager:
             return self.attributes[ID]
         else:
             if not ID:
-                internal = self.internal
-                ID = getattr(internal, self._ID_counter_key) + 1
-                setattr(internal, self._ID_counter_key, ID)
+                ID = getattr(self.internal, self._ID_counter_key) + 1
+                setattr(self.internal, self._ID_counter_key, ID)
                 
                 setattr(obj, self.UUID_key, ID)
             
@@ -342,14 +315,14 @@ class AddonManager:
             bp = getattr(getattr(bpy.types, type_name), prop_name)
             
             if bp[0] == pointer_prop:
-                for obj in getattr(bpy.data, bpy_types_data[type_name]):
+                for obj in getattr(bpy.data, BlEnums.types_data[type_name]):
                     trace(getattr(obj, prop_name))
             elif bp[0] == collection_prop:
-                for obj in getattr(bpy.data, bpy_types_data[type_name]):
+                for obj in getattr(bpy.data, BlEnums.types_data[type_name]):
                     for pg in getattr(obj, prop_name):
                         trace(pg)
             elif prop_name == self.UUID_key:
-                for obj in getattr(bpy.data, bpy_types_data[type_name]):
+                for obj in getattr(bpy.data, BlEnums.types_data[type_name]):
                     ID = getattr(obj, self.UUID_key, None)
                     if ID:
                         non_garbage[ID] = self.attributes[ID]
@@ -358,7 +331,7 @@ class AddonManager:
     #========================================================================#
     
     # ===== HANDLERS AND TYPE EXTENSIONS ===== #
-    def callback_add(self, struct, callback, args, event, owner=None):
+    def callback_add(self, struct, callback, args, event, owner=None): # !!!!!!! deprecated !!!!!!!
         if isinstance(struct, str):
             # We don't care to which exactly area/region this callback
             # would be added, we simply need it to register for all
@@ -372,11 +345,11 @@ class AddonManager:
             area.type = area_type
             
             struct = next((r for r in area.regions if r.type == region_type), None)
-            handler = struct.callback_add(callback, args, event)
+            handler = struct.callback_add(callback, args, event) # !!!!!!! deprecated !!!!!!!
             
             area.type = prev_area_type
         else:
-            handler = struct.callback_add(callback, args, event)
+            handler = struct.callback_add(callback, args, event) # !!!!!!! deprecated !!!!!!!
         
         self.objects[handler] = {
             "object":handler,
@@ -464,6 +437,8 @@ class AddonManager:
         }
     
     def draw_handler_add(self, struct, callback, args, reg, event, owner=None):
+        # TODO: use the same trick as in callback_add() to add calback even if there is no area of appropriate type
+        
         handler = struct.draw_handler_add(callback, args, reg, event)
         
         self.objects[handler] = {
@@ -582,12 +557,10 @@ class AddonManager:
         # for them before register() was invoked
         
         if BpyProp.is_in(self.External):
-            self.type_extend("WindowManager",
-                self.storage_name_external, self.External)
+            self.type_extend("WindowManager", self.storage_name_external, self.External)
         
         if BpyProp.is_in(self.Internal):
-            self.type_extend("Screen",
-                self.storage_name_internal, self.Internal)
+            self.type_extend("Screen", self.storage_name_internal, self.Internal)
         
         if load_config:
             self.external_load()
@@ -628,8 +601,7 @@ class AddonManager:
                 layout = self.layout
                 icons = prop_info.get("icons", {})
                 for k, v, d in prop_info["items"]:
-                    layout.operator(op_idname, text=v,
-                        icon=icons.get(k, 'NONE')).item = k
+                    layout.operator(op_idname, text=v, icon=icons.get(k, 'NONE')).item = k
         
         # ADD METADATA TO PROPERTY
         prop_info["icons_menu"] = menu_idname
@@ -733,8 +705,7 @@ class AddonManager:
         
         s = "lambda cls, context: %s" % " and ".join(conditions)
         
-        return classmethod(eval(s, {"modes":modes, "regions":regions,
-            "spaces":spaces, "poll":poll}, {}))
+        return classmethod(eval(s, {"modes":modes, "regions":regions, "spaces":spaces, "poll":poll}, {}))
     
     def _normalize(self, enum_name, enum, enums, single_enum=False):
         """Make sure enum attributes have proper format"""
@@ -742,8 +713,7 @@ class AddonManager:
         if single_enum:
             err_text = "%s must be one of the %s" % (enum_name, enums)
         else:
-            err_text = "%s must be an item or a collection of items "\
-                "from %s" % (enum_name, enums)
+            err_text = "%s must be an item or a collection of items from %s" % (enum_name, enums)
         
         if isinstance(enum, str):
             if enum not in enums:
@@ -766,6 +736,14 @@ class AddonManager:
         return enum
     
     def _func_to_operator(self, func):
+        # TODO: also support invoke() and modal() (yield/generator interpreted as modal)
+        # Since Python 3.3, generators can return values (return x --> raise StopIteration(x))
+        
+        if not inspect.isfunction(func):
+            raise TypeError("Cannot convert a %s to operator" % type(func))
+        
+        is_generator = inspect.isgeneratorfunction(func)
+        
         argspec = inspect.getfullargspec(func)
         args = argspec.args
         defaults = argspec.defaults
@@ -777,8 +755,7 @@ class AddonManager:
         n_positional = len(args) - n_optional
         
         if n_positional > 2:
-            raise ValueError("Operator.execute(): %s non-optional "\
-                "arguments are specified; maximum is 2" % n_positional)
+            raise ValueError("Operator.execute(): %s non-optional arguments are specified; maximum is 2" % n_positional)
         
         cls = type(func.__name__, (bpy.types.Operator,), {})
         cls.__doc__ = func.__doc__
@@ -796,11 +773,7 @@ class AddonManager:
             
             optional.append("{0}=self.{0}".format(name))
             
-            prop_info = BpyProp(value)
-            if prop_info:
-                prop_info.update(annotation)
-            else:
-                prop_info = value | prop(**annotation)
+            prop_info = BpyProp(value | prop(**annotation), True)
             setattr(cls, name, prop_info())
             
             if prop_info.type == bpy.props.PointerProperty:
@@ -819,7 +792,7 @@ class AddonManager:
         else:
             func_call = "func(%s)" % (positional or optional)
         
-        resmap = {True:{'FINISHED'}, False:{'CANCELLED'}}
+        resmap = {True:{'FINISHED'}, False:{'CANCELLED'}, None:{'PASS_THROUGH'}}
         s = "lambda self, context: resmap[%s is not False]" % func_call
         #s = "lambda self, context: resmap[bool(%s)]" % func_call
         
@@ -832,8 +805,7 @@ class AddonManager:
         is_header = (base is bpy.types.Header)
         is_operator = (base is bpy.types.Operator)
         single_enums = is_panel or is_header
-        has_poll = base in (bpy.types.Operator,
-            bpy.types.Panel, bpy.types.Menu)
+        has_poll = base in (bpy.types.Operator, bpy.types.Panel, bpy.types.Menu)
         
         regions = None
         spaces = None
@@ -841,8 +813,7 @@ class AddonManager:
         # Do some autocompletion on class info
         if not hasattr(cls, "bl_idname"):
             if is_operator:
-                cls.bl_idname = ".".join([p.lower()
-                    for p in cls.__name__.split("_OT_")])
+                cls.bl_idname = ".".join([p.lower() for p in cls.__name__.split("_OT_")])
         
         if not hasattr(cls, "bl_label"):
             cls.bl_label = bpy.path.clean_name(cls.__name__)
@@ -855,30 +826,26 @@ class AddonManager:
         
         # Make sure enum-attributes have correct values
         if hasattr(cls, "bl_options"):
-            cls.bl_options = self._normalize("bl_options",
-                cls.bl_options, bl_options[base.__name__])
+            cls.bl_options = self._normalize("bl_options", cls.bl_options, BlEnums.options.get(base.__name__, ()))
             
             if isinstance(cls.bl_options, str):
                 cls.bl_options = {cls.bl_options}
         
         if hasattr(cls, "bl_region_type") and has_poll:
-            cls.bl_region_type = self._normalize("bl_region_type",
-                cls.bl_region_type, bl_region_types, single_enums)
+            cls.bl_region_type = self._normalize("bl_region_type", cls.bl_region_type, BlEnums.region_types, single_enums)
             
             regions = cls.bl_region_type
         
         if hasattr(cls, "bl_space_type") and (has_poll or is_header):
-            cls.bl_space_type = self._normalize("bl_space_type",
-                cls.bl_space_type, bl_space_types, single_enums)
+            cls.bl_space_type = self._normalize("bl_space_type", cls.bl_space_type, BlEnums.space_types, single_enums)
             
             spaces = cls.bl_space_type
         
         if hasattr(cls, "bl_context") and is_panel:
-            cls.bl_context = self._normalize("bl_context",
-                cls.bl_context, bl_contexts.get(spaces, ()), True)
+            cls.bl_context = self._normalize("bl_context", cls.bl_context, BlEnums.panel_contexts.get(spaces, ()), True)
             
             if (not modes) and (spaces == 'VIEW_3D'):
-                modes = bl_context_to_mode[cls.bl_context]
+                modes = BlEnums.panel_contexts['VIEW_3D'][cls.bl_context]
         
         # Auto-generate poll() method from context restrictions
         generate_poll = False
@@ -911,11 +878,11 @@ class AddonManager:
             for key, value in kwargs.items():
                 name = "bl_" + key
                 if key == "mode":
-                    modes = self._normalize("mode", value, bl_modes)
-                elif name in bl_common_attrs:
+                    modes = self._normalize("mode", value, BlEnums.modes)
+                elif name in BlEnums.common_attrs:
                     if not hasattr(cls, name):
                         setattr(cls, name, value)
-                elif key in bl_common_attrs:
+                elif key in BlEnums.common_attrs:
                     if not hasattr(cls, key):
                         setattr(cls, key, value)
                 else:
@@ -960,11 +927,23 @@ class AddonManager:
     def Header(self, cls=None, **kwargs):
         return self._decorator(cls, bpy.types.Header, kwargs)
     
-    def KeyingSetInfo(self, cls=None, **kwargs):
-        return self._decorator(cls, bpy.types.KeyingSetInfo, kwargs)
-    
     def RenderEngine(self, cls=None, **kwargs):
         return self._decorator(cls, bpy.types.RenderEngine, kwargs)
+    
+    def Node(self, cls=None, **kwargs):
+        return self._decorator(cls, bpy.types.Node, kwargs)
+    
+    def NodeSocket(self, cls=None, **kwargs):
+        return self._decorator(cls, bpy.types.NodeSocket, kwargs)
+    
+    def NodeTree(self, cls=None, **kwargs):
+        return self._decorator(cls, bpy.types.NodeTree, kwargs)
+    
+    def KeyingSet(self, cls=None, **kwargs):
+        return self._decorator(cls, bpy.types.KeyingSet, kwargs)
+    
+    def KeyingSetInfo(self, cls=None, **kwargs):
+        return self._decorator(cls, bpy.types.KeyingSetInfo, kwargs)
     #========================================================================#
     
     # ===== PROPERTY GROUP DECORATORS ===== #
@@ -985,6 +964,8 @@ class AddonManager:
         else:
             return (lambda cls: self._gen_pg(cls, **kwargs))
     
+    # TODO: instead of addon.InlinePropertyGroup(), use
+    # some_prop = dict(subprop1=..., subprop2=..., ...) | prop() ?
     def InlinePropertyGroup(self, *args, **kwargs):
         name = (args[0] if len(args) > 0 else "")
         cls = self._gen_pg(type(name, (), kwargs))

@@ -21,11 +21,12 @@ from mathutils import Color, Vector, Matrix, Quaternion, Euler
 
 import math
 
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!! TODO: check if Blender has a correct implementation now !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-def angle_axis_to_quat(angle, axis):
-    w = math.cos(angle / 2.0)
-    xyz = axis.normalized() * math.sin(angle / 2.0)
-    return Quaternion((w, xyz.x, xyz.y, xyz.z))
+def lerp(v0, v1, t):
+    return v0 * (1.0 - t) + v1 * t
+
+def clamp(v, v_min, v_max):
+    return (v_min if (v < v_min) else (v if v < v_max else v_max))
+    #return min(max(v, v_min), v_max)
 
 def round_step(x, s=1.0):
     #return math.floor(x * s + 0.5) / s
@@ -39,14 +40,20 @@ def clamp_angle(ang):
     ang = (ang % twoPi)
     return ((ang - twoPi) if (ang > math.pi) else ang)
 
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!! TODO: check if Blender has a correct implementation now !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+def angle_axis_to_quat(angle, axis):
+    w = math.cos(angle / 2.0)
+    xyz = axis.normalized() * math.sin(angle / 2.0)
+    return Quaternion((w, xyz.x, xyz.y, xyz.z))
+
 def angle_signed(n, v0, v1, fallback=None):
     angle = v0.angle(v1, fallback)
     if (angle != fallback) and (angle > 0):
         angle *= math.copysign(1.0, v0.cross(v1).dot(n))
     return angle
 
-def snap_pixel_vector(v): # to have 2d-stable 3d drawings
-    return Vector((round(v.x)+0.5, round(v.y)+0.5))
+def snap_pixel_vector(v, d=0.5): # to have 2d-stable 3d drawings
+    return Vector((round(v.x)+d, round(v.y)+d))
 
 def matrix_LRS(L, R, S):
     m = R.to_matrix()

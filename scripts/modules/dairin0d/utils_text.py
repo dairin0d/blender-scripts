@@ -20,8 +20,7 @@
 import re
 
 # Already implemented:
-# bpy_extras.io_utils.unique_name(key, name, name_dict, name_max=-1,
-# clean_func=None, sep='.')
+# bpy_extras.io_utils.unique_name(key, name, name_dict, name_max=-1, clean_func=None, sep='.')
 #def unique_name(src_name, existing_names):
 #    name = src_name
 #    i = 1

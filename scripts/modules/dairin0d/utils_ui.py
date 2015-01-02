@@ -30,6 +30,8 @@ import blf
 
 from mathutils import Color, Vector, Matrix, Quaternion, Euler
 
+from dairin0d.utils_python import AttributeHolder
+
 #============================================================================#
 
 # ===== SPLIT TEXT TO LINES ===== #
@@ -434,21 +436,6 @@ class NestedLayout:
 
 #============================================================================#
 
-def calc_region_rect(area, r, overlap=True):
-    # Note: there may be more than one region of the same type (e.g. in quadview)
-    if (not overlap) and (r.type == 'WINDOW'):
-        x0, y0, x1, y1 = r.x, r.y, r.x+r.width, r.y+r.height
-        ox0, oy0, ox1, oy1 = x0, y0, x1, y1
-        for r in area.regions:
-            if r.type == 'TOOLS':
-                ox0 = r.x + r.width
-            elif r.type == 'UI':
-                ox1 = r.x
-        x0, y0, x1, y1 = max(x0, ox0), max(y0, oy0), min(x1, ox1), min(y1, oy1)
-        return (Vector((x0, y0)), Vector((x1-x0, y1-y0)))
-    else:
-        return (Vector((r.x, r.y)), Vector((r.width, r.height)))
-
 def tag_redraw(arg=None):
     """A utility function to tag redraw of arbitrary UI units."""
     if arg is None:
@@ -465,5 +452,77 @@ def tag_redraw(arg=None):
                 area.tag_redraw()
     else: # Region, Area, RenderEngine
         arg.tag_redraw()
+
+def calc_region_rect(area, r, overlap=True):
+    # Note: there may be more than one region of the same type (e.g. in quadview)
+    if (not overlap) and (r.type == 'WINDOW'):
+        x0, y0, x1, y1 = r.x, r.y, r.x+r.width, r.y+r.height
+        ox0, oy0, ox1, oy1 = x0, y0, x1, y1
+        for r in area.regions:
+            if r.type == 'TOOLS':
+                ox0 = r.x + r.width
+            elif r.type == 'UI':
+                ox1 = r.x
+        x0, y0, x1, y1 = max(x0, ox0), max(y0, oy0), min(x1, ox1), min(y1, oy1)
+        return (Vector((x0, y0)), Vector((x1-x0, y1-y0)))
+    else:
+        return (Vector((r.x, r.y)), Vector((r.width, r.height)))
+
+def point_in_rect(p, r):
+    return ((p[0] >= r.x) and (p[0] < r.x + r.width)
+            and (p[1] >= r.y) and (p[1] < r.y + r.height))
+
+def rv3d_from_region(area, region):
+    if (area.type != 'VIEW_3D') or (region.type != 'WINDOW'):
+        return None
+    
+    space_data = area.spaces.active
+    quadviews = space_data.region_quadviews
+    
+    if len(quadviews) == 0:
+        return space_data.region_3d
+    
+    x_id = 0
+    y_id = 0
+    for r in area.regions:
+        if (r.type == 'WINDOW') and (r != region):
+            if r.x < region.x:
+                x_id = 1
+            if r.y < region.y:
+                y_id = 1
+    
+    # 0: bottom left (Front Ortho)
+    # 1: top left (Top Ortho)
+    # 2: bottom right (Right Ortho)
+    # 3: top right (User Persp)
+    return quadviews[y_id | (x_id << 1)]
+
+# areas can't overlap, but regions can
+def ui_contexts_under_coord(x, y):
+    point = int(x), int(y)
+    window = bpy.context.window
+    screen = window.screen
+    for area in screen.areas:
+        if point_in_rect(point, area):
+            space_data = area.spaces.active
+            for region in area.regions:
+                if point_in_rect(point, region):
+                    region_data = rv3d_from_region(area, region)
+                    context = AttributeHolder()
+                    context.window = window
+                    context.screen = screen
+                    context.area = area
+                    context.region = region
+                    context.space_data = space_data
+                    context.region_data = region_data
+                    yield context
+            break
+
+def ui_context_under_coord(x, y, index=0):
+    ui_context = None
+    for i, ui_context in enumerate(ui_contexts_under_coord(x, y)):
+        if i == index:
+            return ui_context
+    return ui_context
 
 #============================================================================#

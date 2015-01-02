@@ -55,10 +55,9 @@ from mathutils import Color, Vector, Matrix, Quaternion, Euler
 import math
 import time
 
-from dairin0d.utils_math import snap_pixel_vector
 from dairin0d.utils_view3d import SmartView3D
 from dairin0d.utils_userinput import InputKeyMonitor, ModeStack, KeyMapUtils
-from dairin0d.utils_gl import gl_get, gl_enable
+from dairin0d.utils_gl import gl_get, gl_enable, cgl
 from dairin0d.utils_ui import NestedLayout, calc_region_rect
 from dairin0d.bpy_inspect import prop, BlRna
 
@@ -78,13 +77,14 @@ In the wiki:
 * other peculiarities of the algorithms I use?
 
 TODO:
+* zoom/rotate around last paint/sculpt stroke
 * [DONE, as a proof-of-concept] key presets
 ** Blender keys preset
 ** ZBrush Keys preset (needs to be set up at least for Mesh and Sculpt modes too)
 * in zbrush setup, moth3r complains that there is a bit of panning before zoom mode is entered (reminder: pan is Alt, zoom is !Alt)
 * [DONE] in Camera View, shift+drag changes view_camera_offset and mouse wheel changes view_camera_zoom (unless lock_camera is True); in Fly/FPS modes, Lock Camera To View should be ignored
 * [DONE] on exiting Fly/FPS modes, mouse should be set to focus projection
-* stable sv.focus projection without actually projecting (use camera offset/zoom)
+* [DONE] stable sv.focus projection without actually projecting (use camera offset/zoom)
 * [DONE] always render zbrush border in all 3D views
 * [DONE] option to zoom to selection
 * [DONE] add key setups to addon preferences (so that it doesn't have to be set up in each mode manually)
@@ -128,6 +128,42 @@ class MouselookNavigation_InputSettings(bpy.types.PropertyGroup):
     str_keys_fps_crouch = _keyprop("FPS crouch", "Ctrl")
     str_keys_fps_jump = _keyprop("FPS jump", "Space")
     str_keys_fps_teleport = _keyprop("FPS teleport", "{Invoke key}, V")
+    
+    def draw(self, layout):
+        with layout.split(0.15):
+            with layout.column():
+                layout.prop(self, "allowed_transitions")
+            with layout.row():
+                with layout.column():
+                    layout.prop(self, "default_mode")
+                    layout.prop(self, "zbrush_mode", toggle=True)
+                    layout.prop(self, "ortho_unrotate", toggle=True)
+                    layout.label() # just an empty line
+                    layout.prop(self, "str_keys_rotmode_switch")
+                    layout.prop(self, "str_keys_origin_mouse")
+                    layout.prop(self, "str_keys_origin_selection")
+                    layout.prop(self, "str_keys_orbit")
+                    layout.prop(self, "str_keys_orbit_snap")
+                    layout.prop(self, "str_keys_pan")
+                    layout.prop(self, "str_keys_dolly")
+                    layout.prop(self, "str_keys_zoom")
+                    layout.prop(self, "str_keys_fly")
+                    layout.prop(self, "str_keys_fps")
+                with layout.column():
+                    layout.prop(self, "str_keys_confirm")
+                    layout.prop(self, "str_keys_cancel")
+                    layout.label() # just an empty line
+                    layout.prop(self, "str_keys_FPS_forward")
+                    layout.prop(self, "str_keys_FPS_back")
+                    layout.prop(self, "str_keys_FPS_left")
+                    layout.prop(self, "str_keys_FPS_right")
+                    layout.prop(self, "str_keys_FPS_up")
+                    layout.prop(self, "str_keys_FPS_down")
+                    layout.prop(self, "str_keys_fps_acceleration")
+                    layout.prop(self, "str_keys_fps_slowdown")
+                    layout.prop(self, "str_keys_fps_crouch")
+                    layout.prop(self, "str_keys_fps_jump")
+                    layout.prop(self, "str_keys_fps_teleport")
 
 class MouselookNavigation(bpy.types.Operator):
     """Mouselook navigation"""
@@ -412,7 +448,7 @@ class MouselookNavigation(bpy.types.Operator):
             else:
                 if (event.type == 'MOUSEMOVE') or (event.type == 'INBETWEEN_MOUSEMOVE'):
                     if mode == 'PAN':
-                        self.sv.camera_offset -= Vector((mouse_delta.x/region_size.x, mouse_delta.y/region_size.y))
+                        self.sv.camera_offset_pixels -= mouse_delta
                     elif mode == 'ZOOM':
                         self.sv.camera_zoom += (-mouse_delta.y - mouse_delta.x) * (speed_zoom*10)
         
@@ -911,93 +947,44 @@ class MouselookNavigation(bpy.types.Operator):
 
 
 def draw_crosshair(self, context, use_focus):
-    userprefs = context.user_preferences
-    region = context.region
-    v3d = context.space_data
-    rv3d = context.region_data
-    
     if not self.sv.can_move:
         return # if camera can't be manipulated, crosshair is meaningless
     
-    alpha = 1.0
-    has_explicit_origin = (self.explicit_orbit_origin is not None)
+    focus_proj = None
     if use_focus:
-        if has_explicit_origin:
-            alpha = 0.4
-        
+        alpha = (0.4 if self.explicit_orbit_origin else 1.0)
         focus_proj = self.sv.focus_projected
-        if focus_proj is None:
-            return
-    elif has_explicit_origin:
+        z_ref = self.sv.z_distance(self.sv.focus, 0.01)
+    elif self.explicit_orbit_origin:
+        alpha = 1.0
         focus_proj = self.sv.project(self.explicit_orbit_origin)
-        if focus_proj is None:
-            return
-    else:
+        z_ref = self.explicit_orbit_origin
+    
+    if focus_proj is None:
         return
-    
-    focus_proj = snap_pixel_vector(focus_proj)
-    
-    near, far, origin = self.sv.zbuf_range
-    dist = (self.sv.focus - origin).magnitude
-    if self.sv.is_perspective:
-        dist = min(max(dist, near*1.01), far*0.99)
-    else:
-        dist = min(max(dist, near*0.99 + far*0.01), far*0.99 + near*0.01)
     
     l0, l1 = 16, 25
     lines = [(Vector((0, l0)), Vector((0, l1))), (Vector((0, -l0)), Vector((0, -l1))),
              (Vector((l0, 0)), Vector((l1, 0))), (Vector((-l0, 0)), Vector((-l1, 0)))]
-    lines = [(self.sv.unproject(p0 + focus_proj, dist, True),
-              self.sv.unproject(p1 + focus_proj, dist, True)) for p0, p1 in lines]
-    
-    depth_test_prev = gl_get(bgl.GL_DEPTH_TEST)
-    depth_func_prev = gl_get(bgl.GL_DEPTH_FUNC)
-    depth_mask_prev = gl_get(bgl.GL_DEPTH_WRITEMASK)
-    line_stipple_prev = gl_get(bgl.GL_LINE_STIPPLE)
-    color_prev = gl_get(bgl.GL_COLOR)
-    blend_prev = gl_get(bgl.GL_BLEND)
-    line_width_prev = gl_get(bgl.GL_LINE_WIDTH)
-    
-    gl_enable(bgl.GL_BLEND, True)
-    gl_enable(bgl.GL_LINE_STIPPLE, False)
-    gl_enable(bgl.GL_DEPTH_WRITEMASK, False)
-    gl_enable(bgl.GL_DEPTH_TEST, True)
+    lines = [(self.sv.unproject(p0 + focus_proj, z_ref, True),
+              self.sv.unproject(p1 + focus_proj, z_ref, True)) for p0, p1 in lines]
     
     color = self.color_crosshair_visible
-    bgl.glDepthFunc(bgl.GL_LEQUAL)
-    bgl.glColor4f(color[0], color[1], color[2], 1.0*alpha)
-    bgl.glLineWidth(1)
-    bgl.glBegin(bgl.GL_LINES)
-    for p0, p1 in lines:
-        bgl.glVertex3f(p0[0], p0[1], p0[2])
-        bgl.glVertex3f(p1[0], p1[1], p1[2])
-    bgl.glEnd()
-    
+    color_visible = (color[0], color[1], color[2], 1.0*alpha)
     color = self.color_crosshair_obscured
-    bgl.glDepthFunc(bgl.GL_GREATER)
-    bgl.glColor4f(color[0], color[1], color[2], 0.35*alpha)
-    bgl.glLineWidth(3)
-    bgl.glBegin(bgl.GL_LINES)
-    for p0, p1 in lines:
-        bgl.glVertex3f(p0[0], p0[1], p0[2])
-        bgl.glVertex3f(p1[0], p1[1], p1[2])
-    bgl.glEnd()
+    color_obscured = (color[0], color[1], color[2], 0.35*alpha)
     
-    
-    gl_enable(bgl.GL_DEPTH_TEST, depth_test_prev)
-    gl_enable(bgl.GL_DEPTH_WRITEMASK, depth_mask_prev)
-    bgl.glDepthFunc(depth_func_prev)
-    gl_enable(bgl.GL_LINE_STIPPLE, line_stipple_prev)
-    bgl.glColor4f(color_prev[0], color_prev[1], color_prev[2], color_prev[3])
-    gl_enable(bgl.GL_BLEND, blend_prev)
-    bgl.glLineWidth(line_width_prev)
+    with cgl('DepthFunc', 'LineWidth', DEPTH_TEST=True, DEPTH_WRITEMASK=False, BLEND=True, LINE_STIPPLE=False):
+        for c, df, lw in ((color_visible, 'LEQUAL', 1), (color_obscured, 'GREATER', 3)):
+            cgl.Color = c
+            cgl.DepthFunc = df
+            cgl.LineWidth = lw
+            with cgl.batch('LINES') as batch:
+                for p0, p1 in lines:
+                    batch.vertex(*p0)
+                    batch.vertex(*p1)
 
 def draw_callback_view(self, context):
-    userprefs = context.user_preferences
-    region = context.region
-    v3d = context.space_data
-    rv3d = context.region_data
-    
     if self.sv.region_data != context.region_data:
         return
     
@@ -1009,35 +996,29 @@ def draw_callback_view(self, context):
         draw_crosshair(self, context, True)
 
 def draw_callback_px(self, context):
-    context = bpy.context
-    
+    context = bpy.context # we need most up-to-date context
     userprefs = context.user_preferences
     addon_prefs = userprefs.addons[__name__].preferences
     
     if addon_prefs.show_zbrush_border and addon_prefs.zbrush_mode:
         area = context.area
         region = context.region
-        v3d = context.space_data
-        rv3d = context.region_data
         
-        region_pos, region_size = calc_region_rect(area, region)
-        clickable_region_pos, clickable_region_size = calc_region_rect(area, region, False)
-        
-        color = addon_prefs.get_color("color_zbrush_border")
+        full_rect = calc_region_rect(area, region)
+        clickable_rect = calc_region_rect(area, region, False)
         border = calc_zbrush_border(area, region)
+        color = addon_prefs.get_color("color_zbrush_border")
         
-        blend_prev = gl_get(bgl.GL_BLEND)
-        gl_enable(bgl.GL_BLEND, True)
-        x, y = clickable_region_pos - region_pos
-        w, h = clickable_region_size
-        bgl.glColor4f(color[0], color[1], color[2], 0.5)
-        bgl.glBegin(bgl.GL_LINE_LOOP)
-        bgl.glVertex2f(x + border, y + border)
-        bgl.glVertex2f(x + w-border, y + border)
-        bgl.glVertex2f(x + w-border, y + h-border)
-        bgl.glVertex2f(x + border, y + h-border)
-        bgl.glEnd()
-        gl_enable(bgl.GL_BLEND, blend_prev)
+        x, y = clickable_rect[0] - full_rect[0]
+        w, h = clickable_rect[1]
+        
+        with cgl(BLEND=True):
+            cgl.Color = (color[0], color[1], color[2], 0.5)
+            with cgl.batch('LINE_LOOP') as batch:
+                batch.vertex(x + border, y + border)
+                batch.vertex(x + w-border, y + border)
+                batch.vertex(x + w-border, y + h-border)
+                batch.vertex(x + border, y + h-border)
 
 
 def update_keymaps(activate=True):
@@ -1376,41 +1357,7 @@ class ThisAddonPreferences(bpy.types.AddonPreferences):
             else:
                 autoreg_keymap_id = min(self.autoreg_keymap_id, len(self.autoreg_keymaps)-1)
                 inp_set = self.autoreg_keymaps[autoreg_keymap_id].input_settings
-            
-            with layout.split(0.15):
-                with layout.column():
-                    layout.prop(inp_set, "allowed_transitions")
-                with layout.row():
-                    with layout.column():
-                        layout.prop(inp_set, "default_mode")
-                        layout.prop(inp_set, "zbrush_mode", toggle=True)
-                        layout.prop(inp_set, "ortho_unrotate", toggle=True)
-                        layout.label() # just an empty line
-                        layout.prop(inp_set, "str_keys_rotmode_switch")
-                        layout.prop(inp_set, "str_keys_origin_mouse")
-                        layout.prop(inp_set, "str_keys_origin_selection")
-                        layout.prop(inp_set, "str_keys_orbit")
-                        layout.prop(inp_set, "str_keys_orbit_snap")
-                        layout.prop(inp_set, "str_keys_pan")
-                        layout.prop(inp_set, "str_keys_dolly")
-                        layout.prop(inp_set, "str_keys_zoom")
-                        layout.prop(inp_set, "str_keys_fly")
-                        layout.prop(inp_set, "str_keys_fps")
-                    with layout.column():
-                        layout.prop(inp_set, "str_keys_confirm")
-                        layout.prop(inp_set, "str_keys_cancel")
-                        layout.label() # just an empty line
-                        layout.prop(inp_set, "str_keys_FPS_forward")
-                        layout.prop(inp_set, "str_keys_FPS_back")
-                        layout.prop(inp_set, "str_keys_FPS_left")
-                        layout.prop(inp_set, "str_keys_FPS_right")
-                        layout.prop(inp_set, "str_keys_FPS_up")
-                        layout.prop(inp_set, "str_keys_FPS_down")
-                        layout.prop(inp_set, "str_keys_fps_acceleration")
-                        layout.prop(inp_set, "str_keys_fps_slowdown")
-                        layout.prop(inp_set, "str_keys_fps_crouch")
-                        layout.prop(inp_set, "str_keys_fps_jump")
-                        layout.prop(inp_set, "str_keys_fps_teleport")
+            inp_set.draw(layout)
 
 callback_handle_px = None
 
