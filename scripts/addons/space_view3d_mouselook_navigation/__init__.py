@@ -21,7 +21,7 @@ bl_info = {
     "name": "Mouselook Navigation",
     "description": "Alternative 3D view navigation",
     "author": "dairin0d",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (2, 7, 0),
     "location": "View3D > orbit/pan/dolly/zoom/fly/walk",
     "warning": "",
