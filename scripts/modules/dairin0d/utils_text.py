@@ -33,6 +33,22 @@ def compress_whitespace(s):
     return " ".join(s.split())
     #return re.sub("\\s+", " ", s).strip()
 
+def indent(s, t):
+    res = []
+    for l in s.splitlines():
+        res.append(t + l)
+    return "\n".join(res)
+
+def unindent(s, t):
+    res = []
+    nt = len(t)
+    for l in s.splitlines():
+        n1 = len(l)
+        n0 = len(l.lstrip())
+        nd = n1 - n0
+        res.append(l[min(nt, nd):])
+    return "\n".join(res)
+
 def split_expressions(s, sep="\t", strip=False):
     if sep == "\t":
         text = s

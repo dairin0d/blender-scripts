@@ -22,6 +22,18 @@ import traceback
 def reverse_enumerate(l):
     return zip(range(len(l)-1, -1, -1), reversed(l))
 
+def next_catch(iterator):
+    try:
+        return (next(iterator), True)
+    except StopIteration as exc:
+        return (exc.value, False)
+
+def send_catch(iterator, arg):
+    try:
+        return (iterator.send(arg), True)
+    except StopIteration as exc:
+        return (exc.value, False)
+
 def ensure_baseclass(cls, base):
     for _base in cls.__bases__:
         if issubclass(_base, base):

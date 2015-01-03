@@ -57,11 +57,15 @@ import time
 
 from dairin0d.utils_view3d import SmartView3D
 from dairin0d.utils_userinput import InputKeyMonitor, ModeStack, KeyMapUtils
-from dairin0d.utils_gl import gl_get, gl_enable, cgl
+from dairin0d.utils_gl import cgl
 from dairin0d.utils_ui import NestedLayout, calc_region_rect
 from dairin0d.bpy_inspect import prop, BlRna
 
+from dairin0d.utils_addon import AddonManager
+
 from .utils_navigation import trackball, apply_collisions, calc_selection_center, calc_zbrush_border
+
+addon = AddonManager()
 
 """
 Note: due to the use of timer, operator consumes more resources than Blender's default
@@ -70,6 +74,7 @@ ISSUES:
 * in sculpt mode, raycast uses original (non-sculpted mesh). What is the best way around that?
 * Blender's trackball
 * ortho-grid/quadview-clip/projection-name display is not updated
+* zoom/rotate around last paint/sculpt stroke ?
 
 In the wiki:
 * explain the rules for key setup (how the text is interpreted)
@@ -77,7 +82,8 @@ In the wiki:
 * other peculiarities of the algorithms I use?
 
 TODO:
-* zoom/rotate around last paint/sculpt stroke
+* Load/Save/Import/Export presets
+* Generic solution for keymap registration
 * [DONE, as a proof-of-concept] key presets
 ** Blender keys preset
 ** ZBrush Keys preset (needs to be set up at least for Mesh and Sculpt modes too)
@@ -90,9 +96,23 @@ TODO:
 * [DONE] add key setups to addon preferences (so that it doesn't have to be set up in each mode manually)
 * [DONE] make mouselook navigation lower priority than 3D manipulator
 * [DONE] respect Invert Mouse/Wheel Zoom Direction
+
+For some reason, when activating ZBrush preset, the following is printed to the console:
+RNA Warning: Current value "0" matches no enum in 'POSELIB_OT_pose_remove', '(null)', 'pose'
+RNA Warning: Current value "0" matches no enum in 'POSELIB_OT_pose_rename', '(null)', 'pose'
+RNA Warning: Current value "0" matches no enum in 'EnumProperty', 'pose', 'default'
+RNA Warning: Current value "0" matches no enum in 'EnumProperty', 'pose', 'default'
+RNA Warning: Current value "0" matches no enum in 'PAINT_OT_weight_sample_group', '(null)', 'group'
+RNA Warning: Current value "0" matches no enum in 'GROUP_OT_objects_remove', '(null)', 'group'
+RNA Warning: Current value "0" matches no enum in 'GROUP_OT_objects_add_active', '(null)', 'group'
+RNA Warning: Current value "0" matches no enum in 'GROUP_OT_objects_remove_active', '(null)', 'group'
+RNA Warning: Current value "0" matches no enum in 'EnumProperty', 'group', 'default'
+RNA Warning: Current value "0" matches no enum in 'EnumProperty', 'group', 'default'
+RNA Warning: Current value "0" matches no enum in 'EnumProperty', 'group', 'default'
 """
 
-class MouselookNavigation_InputSettings(bpy.types.PropertyGroup):
+@addon.PropertyGroup
+class MouselookNavigation_InputSettings:
     modes = ['ORBIT', 'PAN', 'DOLLY', 'ZOOM', 'FLY', 'FPS']
     transitions = ['NONE:ORBIT', 'NONE:PAN', 'NONE:DOLLY', 'NONE:ZOOM', 'NONE:FLY', 'NONE:FPS', 'ORBIT:PAN', 'ORBIT:DOLLY', 'ORBIT:ZOOM', 'ORBIT:FLY', 'ORBIT:FPS', 'PAN:DOLLY', 'PAN:ZOOM', 'DOLLY:ZOOM', 'FLY:FPS']
     
@@ -165,11 +185,12 @@ class MouselookNavigation_InputSettings(bpy.types.PropertyGroup):
                     layout.prop(self, "str_keys_fps_jump")
                     layout.prop(self, "str_keys_fps_teleport")
 
-class MouselookNavigation(bpy.types.Operator):
+@addon.Operator
+class MouselookNavigation:
     """Mouselook navigation"""
     bl_idname = "view3d.mouselook_navigation"
     bl_label = "Mouselook navigation"
-    bl_options = {'GRAB_POINTER', 'BLOCKING'} # IMPORTANT! otherwise Continuous Grab won't work
+    bl_options = {'GRAB_POINTER', 'BLOCKING'} # GRAB_POINTER for Continuous Grab
     
     input_settings_id = 0 | prop("Input Settings ID", "Input Settings ID", min=0)
     
@@ -212,7 +233,7 @@ class MouselookNavigation(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         wm = context.window_manager
-        settings = wm.mouselook_navigation_runtime_settings
+        settings = addon.external
         if not settings.is_enabled:
             return False
         return (context.space_data.type == 'VIEW_3D')
@@ -761,7 +782,7 @@ class MouselookNavigation(bpy.types.Operator):
     def invoke(self, context, event):
         wm = context.window_manager
         userprefs = context.user_preferences
-        addon_prefs = userprefs.addons[__name__].preferences
+        addon_prefs = addon.preferences
         region = context.region
         v3d = context.space_data
         rv3d = context.region_data
@@ -820,7 +841,6 @@ class MouselookNavigation(bpy.types.Operator):
             self.explicit_orbit_origin = calc_selection_center(context)
         elif self.use_origin_mouse:
             self.delayed_mouse_depth = [0, mouse, mouse_region]
-            #self.process_delayed_depth()
         
         mode_keys = {'ORBIT':self.keys_orbit, 'PAN':self.keys_pan, 'DOLLY':self.keys_dolly, 'ZOOM':self.keys_zoom, 'FLY':self.keys_fly, 'FPS':self.keys_fps}
         self.mode_stack = ModeStack(mode_keys, self.allowed_transitions, self.default_mode, 'NONE')
@@ -845,7 +865,6 @@ class MouselookNavigation(bpy.types.Operator):
         self.show_crosshair = addon_prefs.show_crosshair
         self.show_zbrush_border = addon_prefs.show_zbrush_border
         
-        settings = wm.mouselook_navigation_runtime_settings
         settings = addon_prefs
         self.fps_horizontal = settings.fps_horizontal
         self.trackball_mode = settings.trackball_mode
@@ -892,9 +911,10 @@ class MouselookNavigation(bpy.types.Operator):
         
         self.register_handlers(context)
         
+        context.area.header_text_set()
+        
         # We need the view to redraw so that crosshair would appear
         # immediately after user presses MMB
-        context.area.header_text_set()
         context.area.tag_redraw()
         
         return {'RUNNING_MODAL'}
@@ -930,20 +950,12 @@ class MouselookNavigation(bpy.types.Operator):
     def register_handlers(self, context):
         wm = context.window_manager
         wm.modal_handler_add(self)
-        self._timer = wm.event_timer_add(0.01, context.window)
-        self._handle_view = bpy.types.SpaceView3D.draw_handler_add(
-            draw_callback_view, (self, context), 'WINDOW', 'POST_VIEW')
-        #self._handle_px = bpy.types.SpaceView3D.draw_handler_add(
-        #    draw_callback_px, (self, context), 'WINDOW', 'POST_PIXEL')
+        self._timer = addon.timer_add(wm, 0.01, context.window)
+        self._handle_view = addon.draw_handler_add(bpy.types.SpaceView3D, draw_callback_view, (self, context), 'WINDOW', 'POST_VIEW')
     
     def unregister_handlers(self, context):
-        wm = context.window_manager
-        if self._timer is not None:
-            wm.event_timer_remove(self._timer)
-        if self._handle_view is not None:
-            bpy.types.SpaceView3D.draw_handler_remove(self._handle_view, 'WINDOW')
-        #if self._handle_px is not None:
-        #    bpy.types.SpaceView3D.draw_handler_remove(self._handle_px, 'WINDOW')
+        addon.remove(self._timer)
+        addon.remove(self._handle_view)
 
 
 def draw_crosshair(self, context, use_focus):
@@ -998,7 +1010,7 @@ def draw_callback_view(self, context):
 def draw_callback_px(self, context):
     context = bpy.context # we need most up-to-date context
     userprefs = context.user_preferences
-    addon_prefs = userprefs.addons[__name__].preferences
+    addon_prefs = addon.preferences
     
     if addon_prefs.show_zbrush_border and addon_prefs.zbrush_mode:
         area = context.area
@@ -1021,7 +1033,10 @@ def draw_callback_px(self, context):
                 batch.vertex(x + border, y + h-border)
 
 
+@addon.Operator(idname="wm.mouselook_navigation_autoreg_keymaps_update", label="Update Autoreg Keymaps")
 def update_keymaps(activate=True):
+    """Update auto-registered keymaps"""
+    
     idname = MouselookNavigation.bl_idname
     
     KeyMapUtils.remove(idname)
@@ -1031,7 +1046,7 @@ def update_keymaps(activate=True):
         context = bpy.context
         wm = context.window_manager
         userprefs = context.user_preferences
-        addon_prefs = userprefs.addons[__name__].preferences
+        addon_prefs = addon.preferences
         
         key_monitor = InputKeyMonitor()
         #keymaps = wm.keyconfigs.addon.keymaps
@@ -1096,7 +1111,8 @@ def update_keymaps(activate=True):
             km = keymaps[keymap_name] # expected to exist in user keymaps
             KeyMapUtils.insert(km, kmi_datas)
 
-class AutoRegKeymapInfo(bpy.types.PropertyGroup):
+@addon.PropertyGroup
+class AutoRegKeymapInfo:
     mode_names = ['3D View', 'Object Mode', 'Mesh', 'Curve', 'Armature', 'Metaball', 'Lattice', 'Font', 'Pose', 'Vertex Paint', 'Weight Paint', 'Image Paint', 'Sculpt', 'Particle']
     keymaps = {'3D View'} | prop("Keymaps", name="Keymaps", items=mode_names)
     value_type = "" | prop("Type of event", name="Type of event")
@@ -1112,11 +1128,11 @@ class AutoRegKeymapInfo(bpy.types.PropertyGroup):
     
     def get_is_current(self):
         userprefs = bpy.context.user_preferences
-        addon_prefs = userprefs.addons[__name__].preferences
+        addon_prefs = addon.preferences
         return (addon_prefs.autoreg_keymap_id == self.index) and (not addon_prefs.use_universal_input_settings)
     def set_is_current(self, values):
         userprefs = bpy.context.user_preferences
-        addon_prefs = userprefs.addons[__name__].preferences
+        addon_prefs = addon.preferences
         if values:
             addon_prefs.autoreg_keymap_id = self.index
             addon_prefs.use_universal_input_settings = False
@@ -1125,102 +1141,73 @@ class AutoRegKeymapInfo(bpy.types.PropertyGroup):
     is_current = False | prop(get=get_is_current, set=set_is_current)
     index = 0 | prop()
 
-class AddAutoregKeymap(bpy.types.Operator):
-    bl_idname = "wm.mouselook_navigation_autoreg_keymap_add"
-    bl_label = "Add Autoreg Keymap"
-    bl_description = "Add auto-registered keymap"
-    
-    def execute(self, context):
-        wm = context.window_manager
-        userprefs = context.user_preferences
-        addon_prefs = userprefs.addons[__name__].preferences
-        addon_prefs.use_default_keymap = False
-        ark = addon_prefs.autoreg_keymaps.add()
-        ark.index = len(addon_prefs.autoreg_keymaps)-1
-        addon_prefs.autoreg_keymap_id = ark.index
-        return {'FINISHED'}
+@addon.Operator(idname="wm.mouselook_navigation_autoreg_keymap_add", label="Add Autoreg Keymap")
+def add_autoreg_keymap(self, context):
+    """Add auto-registered keymap"""
+    wm = context.window_manager
+    userprefs = context.user_preferences
+    addon_prefs = addon.preferences
+    addon_prefs.use_default_keymap = False
+    ark = addon_prefs.autoreg_keymaps.add()
+    ark.index = len(addon_prefs.autoreg_keymaps)-1
+    addon_prefs.autoreg_keymap_id = ark.index
 
-class RemoveAutoregKeymap(bpy.types.Operator):
-    bl_idname = "wm.mouselook_navigation_autoreg_keymap_remove"
-    bl_label = "Remove Autoreg Keymap"
-    bl_description = "Remove auto-registered keymap"
-    
-    index = 0 | prop()
-    
-    def execute(self, context):
-        wm = context.window_manager
-        userprefs = context.user_preferences
-        addon_prefs = userprefs.addons[__name__].preferences
-        addon_prefs.use_default_keymap = False
-        addon_prefs.autoreg_keymaps.remove(self.index)
-        if addon_prefs.autoreg_keymap_id >= len(addon_prefs.autoreg_keymaps):
-            addon_prefs.autoreg_keymap_id = len(addon_prefs.autoreg_keymaps)-1
-        for i, ark in enumerate(addon_prefs.autoreg_keymaps):
-            ark.index = i
-        return {'FINISHED'}
-
-class UpdateAutoregKeymaps(bpy.types.Operator):
-    bl_idname = "wm.mouselook_navigation_autoreg_keymaps_update"
-    bl_label = "Update Autoreg Keymaps"
-    bl_description = "Update auto-registered keymaps"
-    
-    def execute(self, context):
-        update_keymaps()
-        return {'FINISHED'}
-
-class AutoregKeymapsPresetLoad(bpy.types.Operator):
-    bl_idname = "wm.mouselook_navigation_autoreg_keymaps_preset_load"
-    bl_label = "Load Autoreg Keymaps Preset"
-    bl_description = "Load Autoreg Keymaps Preset"
-    
-    preset_id = 'Blender' | prop("Preset ID", name="Preset ID", items=[('Blender', 'Blender', 'Blender'), ('ZBrush', 'ZBrush', 'ZBrush')])
-    
-    presets = {
-        'Blender':dict(keymaps=[dict(keymaps={'3D View'}, value_type="Middle Mouse: Any", any=True)]),
-        'ZBrush':dict(universal=False, keymaps=[
-                dict(keymaps=set(AutoRegKeymapInfo.mode_names), value_type="Left Mouse", input_settings=dict(allowed_transitions={'NONE:ORBIT', 'ORBIT:FLY', 'ORBIT:FPS', 'FLY:FPS'}, zbrush_mode=True, str_keys_orbit_snap="Shift", str_keys_pan="Alt", str_keys_zoom="!Alt")),
-                dict(keymaps=set(AutoRegKeymapInfo.mode_names), value_type="Left Mouse", alt=True, input_settings=dict(allowed_transitions={'NONE:PAN', 'PAN:ZOOM'}, zbrush_mode=True, str_keys_orbit_snap="Shift", str_keys_pan="Alt", str_keys_zoom="!Alt")),
-            ]),
-    }
-    
-    def execute(self, context):
-        wm = context.window_manager
-        userprefs = context.user_preferences
-        addon_prefs = userprefs.addons[__name__].preferences
-        
-        addon_prefs.use_default_keymap = False
-        
-        preset = self.presets[self.preset_id]
-        
-        addon_prefs.use_universal_input_settings = preset.get("universal", True)
-        BlRna.reset(addon_prefs.universal_input_settings)
-        BlRna.deserialize(addon_prefs.universal_input_settings, preset.get("settings"))
-        
-        while addon_prefs.autoreg_keymaps:
-            addon_prefs.autoreg_keymaps.remove(0)
-        
-        for ark_data in preset.get("keymaps", tuple()):
-            ark = addon_prefs.autoreg_keymaps.add()
-            BlRna.deserialize(ark, ark_data)
-            ark.index = len(addon_prefs.autoreg_keymaps)-1
+@addon.Operator(idname="wm.mouselook_navigation_autoreg_keymap_remove", label="Remove Autoreg Keymap")
+def remove_autoreg_keymap(self, context, index=0):
+    """Remove auto-registered keymap"""
+    wm = context.window_manager
+    userprefs = context.user_preferences
+    addon_prefs = addon.preferences
+    addon_prefs.use_default_keymap = False
+    addon_prefs.autoreg_keymaps.remove(self.index)
+    if addon_prefs.autoreg_keymap_id >= len(addon_prefs.autoreg_keymaps):
         addon_prefs.autoreg_keymap_id = len(addon_prefs.autoreg_keymaps)-1
-        
-        update_keymaps()
-        
-        return {'FINISHED'}
+    for i, ark in enumerate(addon_prefs.autoreg_keymaps):
+        ark.index = i
 
-class VIEW3D_PT_mouselook_navigation(bpy.types.Panel):
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_label = "Mouselook Nav."
+presets = {
+    'Blender':dict(keymaps=[dict(keymaps={'3D View'}, value_type="Middle Mouse: Any", any=True)]),
+    'ZBrush':dict(universal=False, keymaps=[
+            dict(keymaps=set(AutoRegKeymapInfo.mode_names), value_type="Left Mouse", input_settings=dict(allowed_transitions={'NONE:ORBIT', 'ORBIT:FLY', 'ORBIT:FPS', 'FLY:FPS'}, zbrush_mode=True, str_keys_orbit_snap="Shift", str_keys_pan="Alt", str_keys_zoom="!Alt")),
+            dict(keymaps=set(AutoRegKeymapInfo.mode_names), value_type="Left Mouse", alt=True, input_settings=dict(allowed_transitions={'NONE:PAN', 'PAN:ZOOM'}, zbrush_mode=True, str_keys_orbit_snap="Shift", str_keys_pan="Alt", str_keys_zoom="!Alt")),
+        ]),
+}
+
+@addon.Operator(idname="wm.mouselook_navigation_autoreg_keymaps_preset_load", label="Load Autoreg Keymaps Preset")
+def autoreg_keymaps_preset_load(self, context, preset_id = 'Blender' | prop("Preset ID", name="Preset ID", items=list(presets.keys()))):
+    """Load Autoreg Keymaps Preset"""
+    wm = context.window_manager
+    userprefs = context.user_preferences
+    addon_prefs = addon.preferences
+    
+    addon_prefs.use_default_keymap = False
+    
+    preset = presets[self.preset_id]
+    
+    addon_prefs.use_universal_input_settings = preset.get("universal", True)
+    BlRna.reset(addon_prefs.universal_input_settings)
+    BlRna.deserialize(addon_prefs.universal_input_settings, preset.get("settings"))
+    
+    while addon_prefs.autoreg_keymaps:
+        addon_prefs.autoreg_keymaps.remove(0)
+    
+    for ark_data in preset.get("keymaps", tuple()):
+        ark = addon_prefs.autoreg_keymaps.add()
+        BlRna.deserialize(ark, ark_data)
+        ark.index = len(addon_prefs.autoreg_keymaps)-1
+    addon_prefs.autoreg_keymap_id = len(addon_prefs.autoreg_keymaps)-1
+    
+    update_keymaps()
+
+@addon.Panel(idname="VIEW3D_PT_mouselook_navigation", space_type='VIEW_3D', region_type='UI', label="Mouselook Nav.")
+class VIEW3D_PT_mouselook_navigation:
+    def draw_header(self, context):
+        self.layout.prop(addon.external, "is_enabled", text="")
     
     def draw(self, context):
         layout = NestedLayout(self.layout)
-        wm = context.window_manager
-        settings = wm.mouselook_navigation_runtime_settings
         
-        userprefs = context.user_preferences
-        addon_prefs = userprefs.addons[__name__].preferences
+        addon_prefs = addon.preferences
         settings = addon_prefs
         
         with layout.column(True):
@@ -1247,22 +1234,9 @@ class VIEW3D_PT_mouselook_navigation(bpy.types.Panel):
                     layout.prop(settings, "autolevel_trackball_up", text="Up", toggle=True)
         
         layout.prop(settings, "autolevel_speed_modifier")
-    
-    def draw_header(self, context):
-        layout = self.layout
-        wm = context.window_manager
-        settings = wm.mouselook_navigation_runtime_settings
-        layout.prop(settings, "is_enabled", text="")
 
-class MouselookNavigationRuntimeSettings(bpy.types.PropertyGroup):
-    is_enabled = True | prop("Enable/disable Mouselook Navigation", name="Enabled", options={'HIDDEN'})
-
-class ThisAddonPreferences(bpy.types.AddonPreferences):
-    # this must match the addon name, use '__package__'
-    # when defining this in a submodule of a python package.
-    bl_idname = __name__
-    #bl_idname = __package__
-    
+@addon.Preferences.Include
+class ThisAddonPreferences:
     show_crosshair = True | prop(name="Show Crosshair")
     show_zbrush_border = True | prop(name="Show ZBrush border")
     use_blender_colors = True | prop(name="Use Blender's colors")
@@ -1329,7 +1303,6 @@ class ThisAddonPreferences(bpy.types.AddonPreferences):
             for i, ark in enumerate(autoreg_keymaps):
                 with layout.box():
                     with layout.row():
-                        #icon = (('PMARKER_ACT' if ark.is_current else 'PMARKER_SEL') if not use_universal_input_settings else 'PMARKER')
                         icon = (('PROP_CON' if ark.is_current else 'PROP_ON') if not use_universal_input_settings else 'PROP_OFF')
                         layout.prop(ark, "is_current", text="", icon=icon, icon_only=True, toggle=True, emboss=False)
                         with layout.split(0.6):
@@ -1359,25 +1332,12 @@ class ThisAddonPreferences(bpy.types.AddonPreferences):
                 inp_set = self.autoreg_keymaps[autoreg_keymap_id].input_settings
             inp_set.draw(layout)
 
-callback_handle_px = None
-
 def register():
-    global callback_handle_px
+    addon.External.is_enabled = True | -prop("Enable/disable Mouselook Navigation", name="Enabled")
     
-    bpy.utils.register_class(MouselookNavigation_InputSettings)
+    addon.register()
     
-    bpy.utils.register_class(AutoRegKeymapInfo)
-    bpy.utils.register_class(AddAutoregKeymap)
-    bpy.utils.register_class(RemoveAutoregKeymap)
-    bpy.utils.register_class(UpdateAutoregKeymaps)
-    bpy.utils.register_class(AutoregKeymapsPresetLoad)
-    bpy.utils.register_class(ThisAddonPreferences)
-    
-    bpy.utils.register_class(MouselookNavigation)
-    
-    bpy.utils.register_class(MouselookNavigationRuntimeSettings)
-    bpy.types.WindowManager.mouselook_navigation_runtime_settings = MouselookNavigationRuntimeSettings | prop()
-    bpy.utils.register_class(VIEW3D_PT_mouselook_navigation)
+    addon.draw_handler_add(bpy.types.SpaceView3D, draw_callback_px, (None, None), 'WINDOW', 'POST_PIXEL')
     
     if (not KeyMapUtils.exists(MouselookNavigation.bl_idname)):
         # Strange bug:
@@ -1386,33 +1346,11 @@ def register():
         # is not commented. If there WAS some interaction with 3D view,
         # then addon reloading would work fine.
         update_keymaps(True)
-    
-    callback_handle_px = bpy.types.SpaceView3D.draw_handler_add(
-        draw_callback_px, (None, None), 'WINDOW', 'POST_PIXEL')
 
 def unregister():
-    global callback_handle_px
-    
-    if callback_handle_px is not None:
-        bpy.types.SpaceView3D.draw_handler_remove(callback_handle_px, 'WINDOW')
-    
     update_keymaps(False)
     
-    bpy.utils.unregister_class(VIEW3D_PT_mouselook_navigation)
-    if hasattr(bpy.types.WindowManager, "mouselook_navigation_runtime_settings"):
-        del bpy.types.WindowManager.mouselook_navigation_runtime_settings
-    bpy.utils.unregister_class(MouselookNavigationRuntimeSettings)
-    
-    bpy.utils.unregister_class(MouselookNavigation)
-    
-    bpy.utils.unregister_class(ThisAddonPreferences)
-    bpy.utils.unregister_class(AutoregKeymapsPresetLoad)
-    bpy.utils.unregister_class(UpdateAutoregKeymaps)
-    bpy.utils.unregister_class(RemoveAutoregKeymap)
-    bpy.utils.unregister_class(AddAutoregKeymap)
-    bpy.utils.unregister_class(AutoRegKeymapInfo)
-    
-    bpy.utils.unregister_class(MouselookNavigation_InputSettings)
+    addon.unregister()
 
 if __name__ == "__main__":
     register()

@@ -419,7 +419,7 @@ class BpyProp:
     def iterate(cls, only_type=False, exclude_hidden=False, names=None):
         """Iterate over bpy properties in a class"""
         if not isinstance(cls, type):
-            cls = type(obj)
+            cls = type(cls)
         
         if names is None:
             names = dir(cls)

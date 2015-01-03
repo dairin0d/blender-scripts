@@ -28,15 +28,15 @@ import bpy
 
 from mathutils import Vector, Matrix, Quaternion, Euler, Color
 
-from .utils_python import ensure_baseclass, PrimitiveLock, AttributeHolder
-from .utils_text import compress_whitespace
+from .utils_python import next_catch, send_catch, ensure_baseclass, issubclass_safe, PrimitiveLock, AttributeHolder
+from .utils_text import compress_whitespace, indent
 from .utils_ui import messagebox, NestedLayout
-from .utils_accumulation import prop_accumulator
+from .utils_accumulation import NumberAccumulator, VectorAccumulator, AxisAngleAccumulator, NormalAccumulator
 from .bpy_inspect import BpyProp, prop, BlEnums
 
 #============================================================================#
 
-# TODO: addon preferences
+# TODO: "load/save/import/export config" buttons in addon preferences (draw() method)
 
 # ===== ADDON MANAGER ===== #
 class AddonManager:
@@ -51,82 +51,109 @@ class AddonManager:
     
     # ===== INITIALIZATION ===== #
     def __init__(self, name=None, path=None, config=None):
-        if (name is None) or (path is None):
-            # Search for the topmost module containing bl_info.
-            # If couldn't find one, derive path and name
-            # from the topmost module's __file__.
-            main_path = None
-            f_globals = [fr[0].f_globals for fr in inspect.stack()]
-            for g in reversed(f_globals):
-                if not main_path:
-                    main_path = g.get("__file__", "")
-                    _path = main_path
-                    _name = os.path.basename(_path)
-                    _name = os.path.splitext(_name)[0]
-                
-                info = g.get("bl_info")
-                if info:
-                    _path = g.get("__file__", "")
-                    _name = info.get("name", _name)
-                    break
-            
-            name = name or _name
-            path = path or _path
+        info = self._init_info(name, path, config)
         
-        if not os.path.isdir(path):
-            path = os.path.dirname(path)
-        
-        # If this is an addon developed in .blend, consider blend's
-        # directory as addon directory
-        if os.path.isfile(path):
-            path = os.path.dirname(path)
-        
-        if not os.path.isdir(path):
-            # No such directory in the filesystem.
-            # Settings will be saved in a text block.
-            # (or maybe save in the same directory as
-            # .blend / Blender directory?)
-            
-            """
-            See also:
-            bpy.utils.user_resource(type, path='', create=False)
-                type (string) – Resource type in ['DATAFILES', 'CONFIG',
-                    'SCRIPTS', 'AUTOSAVE'].
-                path (string) – Optional subdirectory.
-                create (boolean) – Treat the path as a directory and
-                    create it if its not existing.
-            Return a user resource path (normally from the users home
-                directory).
-            """
-            
-            path = self._textblock_prefix
-        
-        if not config:
-            config = bpy.path.clean_name(name) + ".json"
-        
-        self.name = name
-        self.path = path
-        self.storage_name = "<%s>" % name
-        self.storage_name_external = "<%s external storage>" % name
-        self.storage_name_internal = "<%s internal storage>" % name
-        #self.storage_name = bpy.path.clean_name(name)
-        self.storage_path = os.path.join(path, config)
+        self.name = info["name"] # displayable name
+        self.path = info["path"] # directory of the main file
+        self.module_name = info["module_name"]
+        self.is_textblock = info["is_textblock"]
+        self.storage_path = info["config_path"]
         
         self.classes = []
         self.objects = {}
-        
         self.attributes = {}
         
-        self.External = self.PropertyGroup(type("%s external storage" % self.name, (), {}))
+        self._init_config_storages()
+    
+    def _init_config_storages(self):
+        #self.storage_name = "<%s>" % self.module_name
+        self.storage_name_external = "<%s-external-storage>" % self.module_name
+        self.storage_name_internal = "<%s-internal-storage>" % self.module_name
+        self.UUID_key = "\x02{%s}{UUID}\x03" % self.module_name
         
-        self.Internal = self.PropertyGroup(type("%s internal storage" % self.name, (), {}))
+        @classmethod
+        def Include(cls, decor_cls):
+            for name in dir(decor_cls):
+                if not (name.startswith("__") and name.endswith("__")):
+                    setattr(cls, name, getattr(decor_cls, name))
+            return cls
         
+        # Attention: AddonPreferences do not allow adding properties
+        # after registration, so we need to register it as a special case
+        self._Preferences = type("%s-preferences" % self.module_name, (bpy.types.AddonPreferences,), {"Include":Include, "bl_idname":self.module_name})
+        
+        self._External = self.PropertyGroup(type("%s-external-storage" % self.module_name, (), {"Include":Include}))
+        
+        self._Internal = self.PropertyGroup(type("%s-internal-storage" % self.module_name, (), {"Include":Include}))
         setattr(self.Internal, self._ID_counter_key, 0 | prop())
+    
+    def _init_info(self, name, path, config):
+        # Search for the topmost module containing bl_info.
+        # If couldn't find one, derive path and name
+        # from the topmost module's __file__.
+        main_path = None
+        module_name = None
+        f_globals = [fr[0].f_globals for fr in inspect.stack()]
+        for g in reversed(f_globals):
+            if not main_path:
+                main_path = g.get("__file__", "")
+                module_name = g.get("__name__", "").split(".")[0]
+                _path = main_path
+                _name = os.path.splitext(os.path.basename(_path))[0]
+            
+            info = g.get("bl_info")
+            if info:
+                module_name = g.get("__name__", "").split(".")[0]
+                _path = g.get("__file__", "")
+                _name = info.get("name", _name)
+                break
         
-        self.UUID_key = "\x02{%s}{UUID}\x03" % name
+        is_textblock = (module_name == "__main__")
+        if is_textblock:
+            module_name = os.path.splitext(os.path.basename(_path))[0]
+            config_path = self._textblock_prefix
+        else:
+            config_path = bpy.utils.user_resource('CONFIG', module_name)
+        
+        name = name or _name
+        path = path or _path
+        
+        if not os.path.isdir(path):
+            # directories/single_file_addon.py
+            # directories/some_blend.blend/TextBlockName
+            path = os.path.dirname(path)
+        
+        if os.path.isfile(path):
+            # directories/some_blend.blend
+            path = os.path.dirname(path)
+        
+        if not os.path.isdir(path):
+            # No such directory in the filesystem
+            path = self._textblock_prefix
+        
+        if not config:
+            config = (bpy.path.clean_name(module_name) if is_textblock else "config") + ".json"
+        
+        config_path = os.path.join(config_path, config)
+        
+        return dict(name=name, path=path, config_path=config_path,
+                    module_name=module_name, is_textblock=is_textblock)
     #========================================================================#
     
-    # ===== EXTERNAL / INTERNAL ===== #
+    # ===== PREFERENCES / EXTERNAL / INTERNAL ===== #
+    # Prevent accidental assignment
+    Preferences = property(lambda self: self._Preferences)
+    External = property(lambda self: self._External)
+    Internal = property(lambda self: self._Internal)
+    
+    @property
+    def preferences(self):
+        userprefs = bpy.context.user_preferences
+        try:
+            return userprefs.addons[self.module_name].preferences
+        except KeyError:
+            return None
+    
     @classmethod
     def external_attr(cls, name):
         wm = bpy.data.window_managers[0]
@@ -198,7 +225,7 @@ class AddonManager:
             # Maybe display a warning?
             return
         
-        BpyProp.deserialize(obj, data)
+        BpyProp.deserialize(obj, data, use_skip_save=True)
     
     def external_save(self):
         obj = self.external
@@ -206,7 +233,7 @@ class AddonManager:
         if not obj:
             return
         
-        data = BpyProp.serialize(obj)
+        data = BpyProp.serialize(obj, use_skip_save=True)
         
         text = json.dumps(data, indent=2)
         
@@ -223,8 +250,7 @@ class AddonManager:
                 with open(path, "w") as f:
                     f.write(text)
             except IOError:
-                messagebox("%s: failed to write config file\n\"%s\"" %
-                    (self.name, self.storage_path), 'ERROR')
+                messagebox("%s: failed to write config file\n\"%s\"" % (self.name, self.storage_path), 'ERROR')
                 return
     #========================================================================#
     
@@ -405,12 +431,10 @@ class AddonManager:
         
         return draw_func
     
-    # Normally, there shouldn't be any need to extend
-    # PropertyGroups declared in other addons
+    # Normally, there shouldn't be any need to extend PropertyGroups declared in other addons
     def type_extend(self, type_name, prop_name, prop_info, owner=None):
-        if isinstance(prop_info, type):
-            if issubclass(prop_info, bpy.types.PropertyGroup):
-                prop_info = prop_info | prop()
+        if issubclass_safe(prop_info, bpy.types.PropertyGroup):
+            prop_info = prop_info | prop()
         
         struct = getattr(bpy.types, type_name)
         setattr(struct, prop_name, prop_info)
@@ -437,8 +461,6 @@ class AddonManager:
         }
     
     def draw_handler_add(self, struct, callback, args, reg, event, owner=None):
-        # TODO: use the same trick as in callback_add() to add calback even if there is no area of appropriate type
-        
         handler = struct.draw_handler_add(callback, args, reg, event)
         
         self.objects[handler] = {
@@ -547,6 +569,8 @@ class AddonManager:
         # Register classes
         for cls in self.classes:
             bpy.utils.register_class(cls)
+        # Special cases:
+        bpy.utils.register_class(self.Preferences)
         
         # Add properties back
         for dep_key, value in deps.items():
@@ -570,6 +594,9 @@ class AddonManager:
         
         self.remove_all()
         
+        # Special cases:
+        bpy.utils.unregister_class(self.Preferences)
+        # Unregister classes
         for cls in reversed(self.classes):
             bpy.utils.unregister_class(cls)
     #========================================================================#
@@ -685,16 +712,16 @@ class AddonManager:
         self.classes.append(cls)
     
     # ===== REGISTRABLE TYPES DECORATORS ===== #
-    def _poll_factory(self, modes, regions, spaces, poll):
+    @staticmethod
+    def _poll_factory(modes, regions, spaces, poll):
         """Generate poll() method for several typical situations"""
         
         conditions = []
         
         def make_condition(attr, enum, enum_name):
-            if enum is None:
-                return
-            op = ("==" if isinstance(enum, str) else "in")
-            conditions.append("(context.%s %s %s)" % (attr, op, enum_name))
+            if enum is not None:
+                op = ("==" if isinstance(enum, str) else "in")
+                conditions.append("(context.%s %s %s)" % (attr, op, enum_name))
         
         make_condition("mode", modes, "modes")
         make_condition("region.type", regions, "regions")
@@ -707,7 +734,8 @@ class AddonManager:
         
         return classmethod(eval(s, {"modes":modes, "regions":regions, "spaces":spaces, "poll":poll}, {}))
     
-    def _normalize(self, enum_name, enum, enums, single_enum=False):
+    @staticmethod
+    def _normalize(enum_name, enum, enums, single_enum=False):
         """Make sure enum attributes have proper format"""
         
         if single_enum:
@@ -735,68 +763,180 @@ class AddonManager:
         
         return enum
     
-    def _func_to_operator(self, func):
-        # TODO: also support invoke() and modal() (yield/generator interpreted as modal)
-        # Since Python 3.3, generators can return values (return x --> raise StopIteration(x))
+    @staticmethod
+    def _func_args_to_bpy_props(func, props_allowed=True):
+        # func(a, b, c, d=1, e=2, f=3, *args, g=4, h=5, i=6, **kwargs)
+        # * only args with default values can be converted to bpy props
+        # * when func is called from wrapper class, the missing
+        #   non-optional arguments will be substituted with None
         
+        argspec = inspect.getfullargspec(func)
+        args = argspec.args
+        varargs = argspec.varargs
+        varkw = argspec.varkw
+        defaults = argspec.defaults
+        kwonlyargs = argspec.kwonlyargs
+        kwonlydefaults = argspec.kwonlydefaults
+        annotations = argspec.annotations
+        
+        bpy_props = []
+        
+        n_optional = (0 if defaults is None else len(defaults))
+        n_positional = len(args) - n_optional
+        n_kwonly = (0 if kwonlyargs is None else len(kwonlyargs))
+        use_varargs = bool(varargs) and (n_optional == 0)
+        
+        if props_allowed:
+            empty_dict = {}
+            
+            def process_arg(name, value):
+                annotation = annotations.get(name, empty_dict)
+                
+                try:
+                    bpy_prop = value | prop(**annotation)
+                except:
+                    return value
+                
+                bpy_props.append((name, bpy_prop))
+                
+                if bpy_prop[0] == bpy.props.PointerProperty:
+                    return None
+                elif bpy_prop[0] == bpy.props.CollectionProperty:
+                    return [] # maybe use a collection emulator?
+                elif BpyProp.validate(value):
+                    return bpy_prop[1]["default"]
+                else:
+                    return value
+            
+            if n_optional != 0:
+                defaults = list(defaults)
+                for i in range(n_optional):
+                    name, value = args[n_positional + i], defaults[i]
+                    defaults[i] = process_arg(name, value)
+                func.__defaults__ = tuple(defaults)
+            
+            if n_kwonly != 0:
+                for name in kwonlyargs:
+                    value = kwonlydefaults[name]
+                    kwonlydefaults[name] = process_arg(name, value)
+                func.__kwdefaults__ = kwonlydefaults
+        
+        return n_positional, use_varargs, bpy_props
+    
+    @staticmethod
+    def _make_func_call(n_positional, use_varargs, positional, optional):
+        n_supplied = len(positional)
+        if use_varargs:
+            n_positional = max(n_positional, n_supplied)
+        params = [(positional[i] if i < n_supplied else "None") for i in range(n_positional)]
+        params.extend(optional)
+        return params
+
+    # func->class coversion is useful for cases when the class
+    # is basically a wrapper of a function which is used in
+    # other places as an actual function. Or for more concise code.
+    def _func_to_bpy_class(self, base, func, props_allowed, wrapinfos):
         if not inspect.isfunction(func):
             raise TypeError("Cannot convert a %s to operator" % type(func))
         
         is_generator = inspect.isgeneratorfunction(func)
+        is_function = not is_generator
         
-        argspec = inspect.getfullargspec(func)
-        args = argspec.args
-        defaults = argspec.defaults
-        annotations = argspec.annotations
+        n_positional, use_varargs, bpy_props = self._func_args_to_bpy_props(func, props_allowed)
         
-        # kwonlyargs, kwonlydefaults -- currently ignored
-        
-        n_optional = (0 if defaults is None else len(defaults))
-        n_positional = len(args) - n_optional
-        
-        if n_positional > 2:
-            raise ValueError("Operator.execute(): %s non-optional arguments are specified; maximum is 2" % n_positional)
-        
-        cls = type(func.__name__, (bpy.types.Operator,), {})
+        cls = type(func.__name__, (base,), {})
         cls.__doc__ = func.__doc__
         
-        if n_optional != 0:
-            defaults = list(defaults)
-        
         optional = []
-        
-        empty_dict = {}
-        for i in range(n_optional):
-            name = args[n_positional + i]
-            value = defaults[i]
-            annotation = annotations.get(name, empty_dict)
-            
+        for name, bpy_prop in bpy_props:
             optional.append("{0}=self.{0}".format(name))
+            setattr(cls, name, bpy_prop)
+        
+        for wrapinfo in wrapinfos:
+            wrapper_name = wrapinfo["name"]
+            wrapper_args = wrapinfo.get("args", ())
+            resmap = wrapinfo.get("resmap") # map src result tp dst result
+            decorator = wrapinfo.get("decorator") # e.g. staticmethod
+            func_init = wrapinfo.get("func_init", True)
+            gen_init = wrapinfo.get("gen_init", True)
+            extra_code = wrapinfo.get("extra_code", "")
+            stopped_code = wrapinfo.get("stopped_code", "")
             
-            prop_info = BpyProp(value | prop(**annotation), True)
-            setattr(cls, name, prop_info())
+            if stopped_code:
+                stopped_code = "if not _yeilded[1]: %s" % stopped_code
             
-            if prop_info.type == bpy.props.PointerProperty:
-                defaults[i] = None
-            elif prop_info.type == bpy.props.CollectionProperty:
-                defaults[i] = [] # maybe use a collection emulator?
-        
-        if n_optional != 0:
-            func.__defaults__ = tuple(defaults)
-        
-        positional = ", ".join(("self", "context")[2 - n_positional:])
-        optional = ", ".join(optional)
-        
-        if positional and optional:
-            func_call = "func(%s, %s)" % (positional, optional)
-        else:
-            func_call = "func(%s)" % (positional or optional)
-        
-        resmap = {True:{'FINISHED'}, False:{'CANCELLED'}, None:{'PASS_THROUGH'}}
-        s = "lambda self, context: resmap[%s is not False]" % func_call
-        #s = "lambda self, context: resmap[bool(%s)]" % func_call
-        
-        cls.execute = eval(s, {"resmap":resmap, "func":func}, empty_dict)
+            extra_code = indent(extra_code, " "*4)
+            stopped_code = indent(stopped_code, " "*4)
+            
+            if (not func_init) and is_function:
+                continue
+            
+            localvars = dict(resmap=resmap, func=func,
+                next_catch=next_catch, send_catch=send_catch)
+            
+            func_call = self._make_func_call(n_positional, use_varargs, wrapper_args, optional)
+            func_call = "func({0})".format(", ".join(func_call))
+            
+            if resmap is not None:
+                if is_generator:
+                    if gen_init:
+                        code = """
+def {0}({1}):
+    self._generator = {2}
+    _yeilded = next_catch(self._generator)
+{4}
+    _result = resmap(_yeilded[0])
+{3}
+    return _result
+"""
+                    else:
+                        code = """
+def {0}({1}):
+    _yeilded = send_catch(self._generator, ({1}))
+{4}
+    _result = resmap(_yeilded[0])
+{3}
+    return _result
+"""
+                else:
+                    code = """
+def {0}({1}):
+    _result = resmap({2})
+{3}
+    return _result
+"""
+            else:
+                if is_generator:
+                    if gen_init:
+                        code = """
+def {0}({1}):
+    self._generator = {2}
+    _yeilded = next_catch(self._generator)
+{4}
+"""
+                    else:
+                        code = """
+def {0}({1}):
+    _yeilded = send_catch(self._generator, ({1}))
+{4}
+"""
+                else:
+                    code = """
+def {0}({1}):
+    {2}
+"""
+            
+            code = code.format(wrapper_name, ", ".join(wrapper_args),
+                func_call, extra_code, stopped_code)
+            #code = "\n".join([l for l in code.splitlines() if l.strip()])
+            #print(code)
+            exec(code, localvars, localvars)
+            
+            wrapper = localvars[wrapper_name]
+            if decorator:
+                wrapper = decorator(wrapper)
+            
+            setattr(cls, wrapper_name, wrapper)
         
         return cls
     
@@ -805,7 +945,9 @@ class AddonManager:
         is_header = (base is bpy.types.Header)
         is_operator = (base is bpy.types.Operator)
         single_enums = is_panel or is_header
-        has_poll = base in (bpy.types.Operator, bpy.types.Panel, bpy.types.Menu)
+        has_poll = base in {bpy.types.Operator, bpy.types.Panel, bpy.types.Menu}
+        has_description = base in {bpy.types.Operator, bpy.types.Macro, bpy.types.Menu,
+            bpy.types.Node, bpy.types.NodeTree, bpy.types.KeyingSet, bpy.types.KeyingSetInfo}
         
         regions = None
         spaces = None
@@ -813,7 +955,7 @@ class AddonManager:
         # Do some autocompletion on class info
         if not hasattr(cls, "bl_idname"):
             if is_operator:
-                cls.bl_idname = ".".join([p.lower() for p in cls.__name__.split("_OT_")])
+                cls.bl_idname = ".".join(p.lower() for p in cls.__name__.split("_OT_"))
         
         if not hasattr(cls, "bl_label"):
             cls.bl_label = bpy.path.clean_name(cls.__name__)
@@ -823,6 +965,8 @@ class AddonManager:
         
         if hasattr(cls, "bl_description"):
             cls.bl_description = compress_whitespace(cls.bl_description)
+        elif has_description and hasattr(cls, "__doc__"): # __doc__ can be None
+            cls.bl_description = compress_whitespace(cls.__doc__ or "")
         
         # Make sure enum-attributes have correct values
         if hasattr(cls, "bl_options"):
@@ -859,14 +1003,22 @@ class AddonManager:
             poll = getattr(cls, "poll", None)
             cls.poll = self._poll_factory(modes, regions, spaces, poll)
     
-    def _add_idnamable(self, cls, base, kwargs=None):
-        if (not isinstance(cls, type)) and (base is bpy.types.Operator):
+    def _add_idnamable(self, cls, base, kwargs, wrapinfos=None):
+        if (not isinstance(cls, type)) and wrapinfos:
+            if "resmap" in kwargs:
+                resmap = kwargs["resmap"]
+                wrapinfos = [dict(w) for w in wrapinfos]
+                for w in wrapinfos:
+                    w["resmap"] = resmap
+                kwargs.pop("resmap", None)
+            
+            props_allowed = base not in (bpy.types.Panel, bpy.types.Menu, bpy.types.Header) # ?
+            
             func = cls # Expected to be a function or method
-            cls = self._func_to_operator(func)
+            cls = self._func_to_bpy_class(base, func, props_allowed, wrapinfos)
         else:
             func = None
-            # Make class an Operator/Menu/Panel, if it's not
-            cls = ensure_baseclass(cls, base)
+            cls = ensure_baseclass(cls, base) # Make class an Operator/Menu/Panel, if it's not
         
         modes = None
         
@@ -897,14 +1049,27 @@ class AddonManager:
         
         return cls
     
-    def _decorator(self, cls, base, kwargs):
+    def _decorator(self, cls, base, kwargs, wrapinfos=None):
         if cls:
-            return self._add_idnamable(cls, base, kwargs)
+            return self._add_idnamable(cls, base, kwargs, wrapinfos)
         else:
-            return (lambda cls: self._add_idnamable(cls, base, kwargs))
+            return (lambda cls: self._add_idnamable(cls, base, kwargs, wrapinfos))
     
+    def _Operator_resmap(value):
+        if isinstance(value, set):
+            return value
+        return ({'FINISHED'} if value else {'CANCELLED'})
+    _Operator_wrapinfos = [
+        dict(name="execute", args=("self", "context"), func_init=True, gen_init=True,
+        resmap=_Operator_resmap, stopped_code="return {'CANCELLED'}"),
+        dict(name="invoke", args=("self", "context", "event"), func_init=True, gen_init=True,
+        resmap=_Operator_resmap, stopped_code="return {'CANCELLED'}",
+        extra_code="if _result == {'RUNNING_MODAL'}: context.window_manager.modal_handler_add(self)"),
+        dict(name="modal", args=("self", "context", "event"), func_init=False, gen_init=False,
+        resmap=_Operator_resmap, stopped_code="return {'CANCELLED'}"),
+    ]
     def Operator(self, cls=None, **kwargs):
-        return self._decorator(cls, bpy.types.Operator, kwargs)
+        return self._decorator(cls, bpy.types.Operator, kwargs, self._Operator_wrapinfos)
     
     def PopupOperator(self, width=300, height=20, **kwargs):
         def decorator(func):
@@ -918,14 +1083,30 @@ class AddonManager:
             return self._add_idnamable(cls, bpy.types.Operator, kwargs)
         return decorator
     
+    _Panel_wrapinfos = [
+        dict(name="draw_header", args=("self", "context"), func_init=False, gen_init=True),
+        dict(name="draw", args=("self", "context"), func_init=True, gen_init=False),
+    ]
     def Panel(self, cls=None, **kwargs):
-        return self._decorator(cls, bpy.types.Panel, kwargs)
+        return self._decorator(cls, bpy.types.Panel, kwargs, self._Panel_wrapinfos)
     
+    _Menu_wrapinfos = [
+        dict(name="draw", args=("self", "context"), func_init=True, gen_init=True),
+    ]
     def Menu(self, cls=None, **kwargs):
-        return self._decorator(cls, bpy.types.Menu, kwargs)
+        return self._decorator(cls, bpy.types.Menu, kwargs, self._Menu_wrapinfos)
     
+    _Header_wrapinfos = [
+        dict(name="draw", args=("self", "context"), func_init=True, gen_init=True),
+    ]
     def Header(self, cls=None, **kwargs):
-        return self._decorator(cls, bpy.types.Header, kwargs)
+        return self._decorator(cls, bpy.types.Header, kwargs, self._Header_wrapinfos)
+    
+    _UIList_wrapinfos = [
+        dict(name="draw", args=("self", "context", "layout", "data", "item", "icon", "active_data", "active_propname"), func_init=True, gen_init=True),
+    ]
+    def UIList(self, cls=None, **kwargs):
+        return self._decorator(cls, bpy.types.UIList, kwargs, self._UIList_wrapinfos)
     
     def RenderEngine(self, cls=None, **kwargs):
         return self._decorator(cls, bpy.types.RenderEngine, kwargs)
@@ -971,15 +1152,36 @@ class AddonManager:
         cls = self._gen_pg(type(name, (), kwargs))
         return cls | prop()
     
+    @staticmethod
+    def _prop_accumulator(prop_decl):
+        prop_info = BpyProp(prop_decl)
+        if prop_info.type in (bpy.props.BoolProperty, bpy.props.IntProperty, bpy.props.FloatProperty):
+            return NumberAccumulator
+        elif prop_info.type in (bpy.props.BoolVectorProperty, bpy.props.IntVectorProperty, bpy.props.FloatVectorProperty):
+            if prop_info.type == bpy.props.FloatVectorProperty:
+                if prop_info.get("subtype") == 'AXISANGLE':
+                    return AxisAngleAccumulator
+                elif prop_info.get("subtype") == 'DIRECTION':
+                    return NormalAccumulator
+            size = prop_info.get("size") or len(prop_info["default"])
+            def vector_accumulator(mode):
+                return VectorAccumulator(mode, size)
+            return vector_accumulator
+        # TODO
+    
     def AccumProp(self, *args, **kwargs):
         addon = self
+        prop_accumulator = self._prop_accumulator
+        
         class accum_prop(prop):
             def accum_make(self, value):
                 prop_decl = self.make(value)
                 accumulator = prop_accumulator(prop_decl)
+                
                 # TODO: how to deal with properties that have
                 # update callback? (i.e. it should be possible
                 # to modify the accumulated properties)
+                
                 @addon.PropertyGroup
                 class accum_pg:
                     prev = prop_decl
@@ -1001,9 +1203,12 @@ class AddonManager:
                             self.converged = False
                             return True
                         return False
+                
                 return accum_pg | prop()
+            
             __ror__ = accum_make
             __rlshift__ = accum_make
+        
         return accum_prop(*args, **kwargs)
     
     def _gen_idblock(self, cls, name=None, icon='DOT', sorted=False):
