@@ -287,6 +287,9 @@ class BlRna:
                     BlRna.deserialize(collection.add(), item, ignore_default, suppress_errors)
             else:
                 if (not ignore_default) or (not BlRna.is_default(value, rna_prop)):
+                    if (type_id == "EnumProperty") and rna_prop.is_enum_flag:
+                        value = set(value) # might be other collection type when loaded from JSON
+                    
                     if not suppress_errors:
                         setattr(obj, name, value)
                     else:
@@ -985,7 +988,7 @@ class prop:
         items = kwargs.get("items", ())
         if hasattr(items, "__iter__"): # sequence -> ensure full form
             # Note: ID is actually a bitmask
-            items = [cls.expand_enum_item(v, kwargs, 1 << id) for id, v in enumerate(items)]
+            items = [cls.expand_enum_item(v, kwargs, (1 << id) if enum_flag else (id+1)) for id, v in enumerate(items)]
             kwargs["items"] = items
             if enum_flag:
                 value = (({value} if value else set()) if isinstance(value, str) else set(value))

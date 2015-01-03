@@ -54,6 +54,8 @@ from mathutils import Color, Vector, Matrix, Quaternion, Euler
 
 import math
 import time
+import os
+import json
 
 from dairin0d.utils_view3d import SmartView3D
 from dairin0d.utils_userinput import InputKeyMonitor, ModeStack, KeyMapUtils
@@ -125,29 +127,29 @@ class MouselookNavigation_InputSettings:
     
     def _keyprop(name, default_keys):
         return default_keys | prop(name, name)
-    str_keys_confirm = _keyprop("Confirm", "Ret, Numpad Enter, Left Mouse: Press")
-    str_keys_cancel = _keyprop("Cancel", "Esc, Right Mouse: Press")
-    str_keys_rotmode_switch = _keyprop("Trackball on/off", "Space: Press")
-    str_keys_origin_mouse = _keyprop("Origin: Mouse", "")
-    str_keys_origin_selection = _keyprop("Origin: Selection", "")
-    str_keys_orbit = _keyprop("Orbit", "") # main operator key (MMB) by default
-    str_keys_orbit_snap = _keyprop("Orbit Snap", "Alt")
-    str_keys_pan = _keyprop("Pan", "Shift")
-    str_keys_dolly = _keyprop("Dolly", "")
-    str_keys_zoom = _keyprop("Zoom", "Ctrl")
-    str_keys_fly = _keyprop("Fly", "{Invoke key}: Double click")
-    str_keys_fps = _keyprop("Walk", "Tab: Press")
-    str_keys_FPS_forward = _keyprop("FPS forward", "W, Up Arrow")
-    str_keys_FPS_back = _keyprop("FPS back", "S, Down Arrow")
-    str_keys_FPS_left = _keyprop("FPS left", "A, Left Arrow")
-    str_keys_FPS_right = _keyprop("FPS right", "D, Right Arrow")
-    str_keys_FPS_up = _keyprop("FPS up", "E, R, Page Up")
-    str_keys_FPS_down = _keyprop("FPS down", "Q, F, Page Down")
-    str_keys_fps_acceleration = _keyprop("FPS fast", "Shift")
-    str_keys_fps_slowdown = _keyprop("FPS slow", "Ctrl")
-    str_keys_fps_crouch = _keyprop("FPS crouch", "Ctrl")
-    str_keys_fps_jump = _keyprop("FPS jump", "Space")
-    str_keys_fps_teleport = _keyprop("FPS teleport", "{Invoke key}, V")
+    keys_confirm = _keyprop("Confirm", "Ret, Numpad Enter, Left Mouse: Press")
+    keys_cancel = _keyprop("Cancel", "Esc, Right Mouse: Press")
+    keys_rotmode_switch = _keyprop("Trackball on/off", "Space: Press")
+    keys_origin_mouse = _keyprop("Origin: Mouse", "")
+    keys_origin_selection = _keyprop("Origin: Selection", "")
+    keys_orbit = _keyprop("Orbit", "") # main operator key (MMB) by default
+    keys_orbit_snap = _keyprop("Orbit Snap", "Alt")
+    keys_pan = _keyprop("Pan", "Shift")
+    keys_dolly = _keyprop("Dolly", "")
+    keys_zoom = _keyprop("Zoom", "Ctrl")
+    keys_fly = _keyprop("Fly", "{Invoke key}: Double click")
+    keys_fps = _keyprop("Walk", "Tab: Press")
+    keys_FPS_forward = _keyprop("FPS forward", "W, Up Arrow")
+    keys_FPS_back = _keyprop("FPS back", "S, Down Arrow")
+    keys_FPS_left = _keyprop("FPS left", "A, Left Arrow")
+    keys_FPS_right = _keyprop("FPS right", "D, Right Arrow")
+    keys_FPS_up = _keyprop("FPS up", "E, R, Page Up")
+    keys_FPS_down = _keyprop("FPS down", "Q, F, Page Down")
+    keys_fps_acceleration = _keyprop("FPS fast", "Shift")
+    keys_fps_slowdown = _keyprop("FPS slow", "Ctrl")
+    keys_fps_crouch = _keyprop("FPS crouch", "Ctrl")
+    keys_fps_jump = _keyprop("FPS jump", "Space")
+    keys_fps_teleport = _keyprop("FPS teleport", "{Invoke key}, V")
     
     def draw(self, layout):
         with layout.split(0.15):
@@ -159,31 +161,31 @@ class MouselookNavigation_InputSettings:
                     layout.prop(self, "zbrush_mode", toggle=True)
                     layout.prop(self, "ortho_unrotate", toggle=True)
                     layout.label() # just an empty line
-                    layout.prop(self, "str_keys_rotmode_switch")
-                    layout.prop(self, "str_keys_origin_mouse")
-                    layout.prop(self, "str_keys_origin_selection")
-                    layout.prop(self, "str_keys_orbit")
-                    layout.prop(self, "str_keys_orbit_snap")
-                    layout.prop(self, "str_keys_pan")
-                    layout.prop(self, "str_keys_dolly")
-                    layout.prop(self, "str_keys_zoom")
-                    layout.prop(self, "str_keys_fly")
-                    layout.prop(self, "str_keys_fps")
+                    layout.prop(self, "keys_rotmode_switch")
+                    layout.prop(self, "keys_origin_mouse")
+                    layout.prop(self, "keys_origin_selection")
+                    layout.prop(self, "keys_orbit")
+                    layout.prop(self, "keys_orbit_snap")
+                    layout.prop(self, "keys_pan")
+                    layout.prop(self, "keys_dolly")
+                    layout.prop(self, "keys_zoom")
+                    layout.prop(self, "keys_fly")
+                    layout.prop(self, "keys_fps")
                 with layout.column():
-                    layout.prop(self, "str_keys_confirm")
-                    layout.prop(self, "str_keys_cancel")
+                    layout.prop(self, "keys_confirm")
+                    layout.prop(self, "keys_cancel")
                     layout.label() # just an empty line
-                    layout.prop(self, "str_keys_FPS_forward")
-                    layout.prop(self, "str_keys_FPS_back")
-                    layout.prop(self, "str_keys_FPS_left")
-                    layout.prop(self, "str_keys_FPS_right")
-                    layout.prop(self, "str_keys_FPS_up")
-                    layout.prop(self, "str_keys_FPS_down")
-                    layout.prop(self, "str_keys_fps_acceleration")
-                    layout.prop(self, "str_keys_fps_slowdown")
-                    layout.prop(self, "str_keys_fps_crouch")
-                    layout.prop(self, "str_keys_fps_jump")
-                    layout.prop(self, "str_keys_fps_teleport")
+                    layout.prop(self, "keys_FPS_forward")
+                    layout.prop(self, "keys_FPS_back")
+                    layout.prop(self, "keys_FPS_left")
+                    layout.prop(self, "keys_FPS_right")
+                    layout.prop(self, "keys_FPS_up")
+                    layout.prop(self, "keys_FPS_down")
+                    layout.prop(self, "keys_fps_acceleration")
+                    layout.prop(self, "keys_fps_slowdown")
+                    layout.prop(self, "keys_fps_crouch")
+                    layout.prop(self, "keys_fps_jump")
+                    layout.prop(self, "keys_fps_teleport")
 
 @addon.Operator
 class MouselookNavigation:
@@ -206,29 +208,29 @@ class MouselookNavigation:
             self.keys_invoke_confirm = self.km.keychecker(event.type+":PRESS")
         else:
             self.keys_invoke_confirm = self.km.keychecker(event.type+":RELEASE")
-        self.keys_confirm = self.km.keychecker(inp_set.str_keys_confirm)
-        self.keys_cancel = self.km.keychecker(inp_set.str_keys_cancel)
-        self.keys_rotmode_switch = self.km.keychecker(inp_set.str_keys_rotmode_switch)
-        self.keys_origin_mouse = self.km.keychecker(inp_set.str_keys_origin_mouse)
-        self.keys_origin_selection = self.km.keychecker(inp_set.str_keys_origin_selection)
-        self.keys_orbit = self.km.keychecker(inp_set.str_keys_orbit)
-        self.keys_orbit_snap = self.km.keychecker(inp_set.str_keys_orbit_snap)
-        self.keys_pan = self.km.keychecker(inp_set.str_keys_pan)
-        self.keys_dolly = self.km.keychecker(inp_set.str_keys_dolly)
-        self.keys_zoom = self.km.keychecker(inp_set.str_keys_zoom)
-        self.keys_fly = self.km.keychecker(inp_set.str_keys_fly)
-        self.keys_fps = self.km.keychecker(inp_set.str_keys_fps)
-        self.keys_FPS_forward = self.km.keychecker(inp_set.str_keys_FPS_forward)
-        self.keys_FPS_back = self.km.keychecker(inp_set.str_keys_FPS_back)
-        self.keys_FPS_left = self.km.keychecker(inp_set.str_keys_FPS_left)
-        self.keys_FPS_right = self.km.keychecker(inp_set.str_keys_FPS_right)
-        self.keys_FPS_up = self.km.keychecker(inp_set.str_keys_FPS_up)
-        self.keys_FPS_down = self.km.keychecker(inp_set.str_keys_FPS_down)
-        self.keys_fps_acceleration = self.km.keychecker(inp_set.str_keys_fps_acceleration)
-        self.keys_fps_slowdown = self.km.keychecker(inp_set.str_keys_fps_slowdown)
-        self.keys_fps_crouch = self.km.keychecker(inp_set.str_keys_fps_crouch)
-        self.keys_fps_jump = self.km.keychecker(inp_set.str_keys_fps_jump)
-        self.keys_fps_teleport = self.km.keychecker(inp_set.str_keys_fps_teleport)
+        self.keys_confirm = self.km.keychecker(inp_set.keys_confirm)
+        self.keys_cancel = self.km.keychecker(inp_set.keys_cancel)
+        self.keys_rotmode_switch = self.km.keychecker(inp_set.keys_rotmode_switch)
+        self.keys_origin_mouse = self.km.keychecker(inp_set.keys_origin_mouse)
+        self.keys_origin_selection = self.km.keychecker(inp_set.keys_origin_selection)
+        self.keys_orbit = self.km.keychecker(inp_set.keys_orbit)
+        self.keys_orbit_snap = self.km.keychecker(inp_set.keys_orbit_snap)
+        self.keys_pan = self.km.keychecker(inp_set.keys_pan)
+        self.keys_dolly = self.km.keychecker(inp_set.keys_dolly)
+        self.keys_zoom = self.km.keychecker(inp_set.keys_zoom)
+        self.keys_fly = self.km.keychecker(inp_set.keys_fly)
+        self.keys_fps = self.km.keychecker(inp_set.keys_fps)
+        self.keys_FPS_forward = self.km.keychecker(inp_set.keys_FPS_forward)
+        self.keys_FPS_back = self.km.keychecker(inp_set.keys_FPS_back)
+        self.keys_FPS_left = self.km.keychecker(inp_set.keys_FPS_left)
+        self.keys_FPS_right = self.km.keychecker(inp_set.keys_FPS_right)
+        self.keys_FPS_up = self.km.keychecker(inp_set.keys_FPS_up)
+        self.keys_FPS_down = self.km.keychecker(inp_set.keys_FPS_down)
+        self.keys_fps_acceleration = self.km.keychecker(inp_set.keys_fps_acceleration)
+        self.keys_fps_slowdown = self.km.keychecker(inp_set.keys_fps_slowdown)
+        self.keys_fps_crouch = self.km.keychecker(inp_set.keys_fps_crouch)
+        self.keys_fps_jump = self.km.keychecker(inp_set.keys_fps_jump)
+        self.keys_fps_teleport = self.km.keychecker(inp_set.keys_fps_teleport)
     
     @classmethod
     def poll(cls, context):
@@ -1165,16 +1167,39 @@ def remove_autoreg_keymap(self, context, index=0):
     for i, ark in enumerate(addon_prefs.autoreg_keymaps):
         ark.index = i
 
-presets = {
-    'Blender':dict(keymaps=[dict(keymaps={'3D View'}, value_type="Middle Mouse: Any", any=True)]),
-    'ZBrush':dict(universal=False, keymaps=[
-            dict(keymaps=set(AutoRegKeymapInfo.mode_names), value_type="Left Mouse", input_settings=dict(allowed_transitions={'NONE:ORBIT', 'ORBIT:FLY', 'ORBIT:FPS', 'FLY:FPS'}, zbrush_mode=True, str_keys_orbit_snap="Shift", str_keys_pan="Alt", str_keys_zoom="!Alt")),
-            dict(keymaps=set(AutoRegKeymapInfo.mode_names), value_type="Left Mouse", alt=True, input_settings=dict(allowed_transitions={'NONE:PAN', 'PAN:ZOOM'}, zbrush_mode=True, str_keys_orbit_snap="Shift", str_keys_pan="Alt", str_keys_zoom="!Alt")),
-        ]),
-}
+class PresetManager:
+    presets = {}
+    sorted_names = []
+    
+    @classmethod
+    def load(cls):
+        cls.presets = {}
+        cls.sorted_names = []
+        
+        dirpath = os.path.join(addon.path, "presets")
+        if not os.path.isdir(dirpath):
+            return
+        
+        for dirpath, dirnames, filenames in os.walk(dirpath):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                with open(filepath, "r") as file:
+                    data = json.loads(file.read())
+                filename = os.path.splitext(filename)[0]
+                cls.presets[filename] = data
+        
+        cls.sorted_names = sorted(cls.presets.keys())
+    
+    @staticmethod
+    def enum_items(self, context):
+        # WARNING: There is a known bug with using a callback, Python must keep a reference to the strings returned or Blender will crash.
+        enum_items = []
+        for preset_name in PresetManager.sorted_names:
+            enum_items.append((preset_name, preset_name, preset_name))
+        return enum_items
 
 @addon.Operator(idname="wm.mouselook_navigation_autoreg_keymaps_preset_load", label="Load Autoreg Keymaps Preset")
-def autoreg_keymaps_preset_load(self, context, preset_id = 'Blender' | prop("Preset ID", name="Preset ID", items=list(presets.keys()))):
+def autoreg_keymaps_preset_load(self, context, preset_id = '' | prop("Preset ID", name="Preset ID", items=PresetManager.enum_items)):
     """Load Autoreg Keymaps Preset"""
     wm = context.window_manager
     userprefs = context.user_preferences
@@ -1182,7 +1207,7 @@ def autoreg_keymaps_preset_load(self, context, preset_id = 'Blender' | prop("Pre
     
     addon_prefs.use_default_keymap = False
     
-    preset = presets[self.preset_id]
+    preset = PresetManager.presets[self.preset_id]
     
     addon_prefs.use_universal_input_settings = preset.get("universal", True)
     BlRna.reset(addon_prefs.universal_input_settings)
@@ -1338,6 +1363,8 @@ def register():
     addon.register()
     
     addon.draw_handler_add(bpy.types.SpaceView3D, draw_callback_px, (None, None), 'WINDOW', 'POST_PIXEL')
+    
+    PresetManager.load()
     
     if (not KeyMapUtils.exists(MouselookNavigation.bl_idname)):
         # Strange bug:

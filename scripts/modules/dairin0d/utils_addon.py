@@ -804,7 +804,7 @@ class AddonManager:
                 elif bpy_prop[0] == bpy.props.CollectionProperty:
                     return [] # maybe use a collection emulator?
                 elif BpyProp.validate(value):
-                    return bpy_prop[1]["default"]
+                    return bpy_prop[1].get("default", BpyProp.known[bpy_prop[0]])
                 else:
                     return value
             
