@@ -53,7 +53,7 @@ from {0}dairin0d.utils_addon import AddonManager
 addon = AddonManager()
 
 # moth3r asks to be able to add Batch panel also to the right shelf
-# TODO: copy/paste modifiers; constraints; materials (+completely remove immediately)
+# TODO: constraints; materials (+completely remove immediately)
 
 refresh_interval = 0.5
 
@@ -76,30 +76,18 @@ def attrs_to_dict(obj):
 def dict_to_attrs(obj, d):
     for name, value in d.items():
         if not name.startswith("_"):
-            setattr(obj, name, value)
+            try:
+                setattr(obj, name, value)
+            except:
+                pass
 
-def copy_modifiers_to_selection(obj, context):
-    for obj2 in context.selected_objects:
-        if obj2 == obj:
-            continue
-        
-        obj2.modifiers.clear()
-        
-        if not obj:
-            continue
-        
-        for src in obj.modifiers:
-            md = obj2.modifiers.new(src.name, src.type)
-            copyattrs(src, md)
-
-@addon.Operator(idname="view3d.pick_modifiers")
-def Pick_Modifiers(self, context, event):
-    """Pick modifier(s) from the object under mouse"""
+class Pick_Base:
+    def invoke(self, context, event):
+        context.window.cursor_modal_set('EYEDROPPER')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
     
-    context.window.cursor_modal_set('EYEDROPPER')
-    
-    while True:
-        self, context, event = yield {'RUNNING_MODAL'}
+    def modal(self, context, event):
         cancel = (event.type in {'ESC', 'RIGHTMOUSE'})
         confirm = (event.type == 'LEFTMOUSE') and (event.value == 'PRESS')
         
@@ -119,20 +107,43 @@ def Pick_Modifiers(self, context, event):
         if raycast_result and raycast_result[0]:
             obj = raycast_result[1]
         
-        txt = ""
-        if obj:
-            txt = ", ".join(
-                md.bl_rna.name.replace(" Modifier", "")
-                for md in obj.modifiers)
+        txt = (self.obj_to_info(obj) if obj else "")
         context.area.header_text_set(txt)
         
         if cancel or confirm:
             if confirm:
-                bpy.ops.ed.undo_push(message="Pick Modifiers")
-                copy_modifiers_to_selection(obj, context)
+                self.on_confirm(context, obj)
             context.area.header_text_set()
             context.window.cursor_modal_restore()
             return ({'FINISHED'} if confirm else {'CANCELLED'})
+        return {'RUNNING_MODAL'}
+
+# =============================== MODIFIERS ================================ #
+#============================================================================#
+@addon.Operator(idname="view3d.pick_modifiers")
+class Pick_Modifiers(Pick_Base):
+    """Pick modifier(s) from the object under mouse"""
+    
+    def obj_to_info(self, obj):
+        return ", ".join(md.bl_rna.name.replace(" Modifier", "") for md in obj.modifiers)
+    
+    def on_confirm(self, context, obj):
+        bpy.ops.ed.undo_push(message="Pick Modifiers")
+        
+        Batch_Copy_Modifiers(None, context, object=obj) # also save to clipboard
+        
+        for obj2 in context.selected_objects:
+            if obj2 == obj:
+                continue
+            
+            obj2.modifiers.clear()
+            
+            if not obj:
+                continue
+            
+            for src in obj.modifiers:
+                md = obj2.modifiers.new(src.name, src.type)
+                copyattrs(src, md)
 
 @addon.Menu(idname="OBJECT_MT_batch_modifier_add")
 def OBJECT_MT_batch_modifier_add(self, context):
@@ -147,25 +158,21 @@ def OBJECT_MT_batch_modifier_add(self, context):
         op.modifier = idname
 
 @addon.Operator(idname="object.batch_modifier_copy")
-def Batch_Copy_Modifiers(self, context):
+def Batch_Copy_Modifiers(self, context, **kwargs):
     """Copy modifier(s) from the selected objects"""
-    obj = context.active_object
+    obj = kwargs.get("object", context.active_object)
     if obj:
-        md_infos = [BlRna.serialize(md) for md in obj.modifiers]
+        md_infos = [attrs_to_dict(md) for md in obj.modifiers]
         json_data = {"content":"Blender:object.modifiers", "items":md_infos}
-        wm = context.window_manager
-        wm.clipboard = json.dumps(json_data)
+        ModifiersPG.clipbuffer = json_data
 
 @addon.Operator(idname="object.batch_modifier_paste", options={'REGISTER', 'UNDO'})
 def Batch_Paste_Modifiers(self, context):
     """Paste modifier(s) to the selected objects"""
     bpy.ops.ed.undo_push(message="Batch Paste Modifiers")
     
-    wm = context.window_manager
-    try:
-        json_data = json.loads(wm.clipboard)
-        assert json_data["content"] == "Blender:object.modifiers"
-    except:
+    json_data = ModifiersPG.clipbuffer
+    if json_data is None:
         return
     
     for obj in context.selected_objects:
@@ -181,7 +188,7 @@ def Batch_Paste_Modifiers(self, context):
         md_info.pop("name", None)
         for obj in context.selected_objects:
             md = obj.modifiers.new(name, idname)
-            BlRna.deserialize(md, md_info)
+            dict_to_attrs(md, md_info)
 
 @addon.Operator(idname="object.batch_modifier_add", options={'REGISTER', 'UNDO'})
 def Batch_Add_Modifiers(self, context, modifier=""):
@@ -303,6 +310,8 @@ class ModifiersPG:
     all_idnames = "" | prop()
     
     remaining_items = []
+    
+    clipbuffer = None
     
     def refresh(self, context):
         if time.clock() < self.clock:
@@ -451,7 +460,7 @@ class ModifiersPG:
                     op.modifier = item.idname
 
 @addon.Panel
-class VIEW3D_PT_batch_modifiers:#(bpy.types.Panel):
+class VIEW3D_PT_batch_modifiers:
     bl_category = "Batch"
     bl_context = "objectmode"
     bl_label = "Modifiers"
@@ -465,12 +474,6 @@ class VIEW3D_PT_batch_modifiers:#(bpy.types.Panel):
         with layout.row(True):
             with layout.row():
                 layout.menu("OBJECT_MT_batch_modifier_add", icon='ZOOMIN', text="")
-            #with layout.row():
-            #    layout.operator("view3d.pick_modifiers", icon='EYEDROPPER', text="")
-            #with layout.row():
-            #    layout.operator("object.batch_modifier_copy", icon='COPYDOWN', text="")
-            #with layout.row():
-            #    layout.operator("object.batch_modifier_paste", icon='PASTEDOWN', text="")
             layout.operator("view3d.pick_modifiers", icon='EYEDROPPER', text="")
             layout.operator("object.batch_modifier_copy", icon='COPYDOWN', text="")
             layout.operator("object.batch_modifier_paste", icon='PASTEDOWN', text="")
@@ -482,8 +485,7 @@ class VIEW3D_PT_batch_modifiers:#(bpy.types.Panel):
         batch_modifiers.draw(layout)
 
 addon.External.modifiers = ModifiersPG | -prop()
-
-# TODO: copy, paste ?
+#============================================================================#
 
 def register():
     addon.register()
