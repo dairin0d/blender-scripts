@@ -33,6 +33,7 @@ bl_info = {
 import bpy
 
 import time
+import json
 
 from mathutils import Vector
 
@@ -133,11 +134,57 @@ def Pick_Modifiers(self, context, event):
             context.window.cursor_modal_restore()
             return ({'FINISHED'} if confirm else {'CANCELLED'})
 
-def batch_add_items(self, context):
-    return ModifiersPG.remaining_items
+@addon.Menu(idname="OBJECT_MT_batch_modifier_add")
+def OBJECT_MT_batch_modifier_add(self, context):
+    """Add modifier(s) to the selected objects"""
+    layout = NestedLayout(self.layout)
+    
+    for item in ModifiersPG.remaining_items:
+        idname = item[0]
+        name = item[1]
+        icon = ModifiersPG.modifier_icons.get(idname, 'MODIFIER')
+        op = layout.operator("object.batch_modifier_add", text=name, icon=icon)
+        op.modifier = idname
+
+@addon.Operator(idname="object.batch_modifier_copy")
+def Batch_Copy_Modifiers(self, context):
+    """Copy modifier(s) from the selected objects"""
+    obj = context.active_object
+    if obj:
+        md_infos = [BlRna.serialize(md) for md in obj.modifiers]
+        json_data = {"content":"Blender:object.modifiers", "items":md_infos}
+        wm = context.window_manager
+        wm.clipboard = json.dumps(json_data)
+
+@addon.Operator(idname="object.batch_modifier_paste", options={'REGISTER', 'UNDO'})
+def Batch_Paste_Modifiers(self, context):
+    """Paste modifier(s) to the selected objects"""
+    bpy.ops.ed.undo_push(message="Batch Paste Modifiers")
+    
+    wm = context.window_manager
+    try:
+        json_data = json.loads(wm.clipboard)
+        assert json_data["content"] == "Blender:object.modifiers"
+    except:
+        return
+    
+    for obj in context.selected_objects:
+        obj.modifiers.clear()
+    
+    md_infos = json_data.get("items", ())
+    for md_info in md_infos:
+        idname = md_info.get("type")
+        if not idname:
+            continue
+        md_info.pop("type", None)
+        name = md_info.get("name", idname.capitalize())
+        md_info.pop("name", None)
+        for obj in context.selected_objects:
+            md = obj.modifiers.new(name, idname)
+            BlRna.deserialize(md, md_info)
 
 @addon.Operator(idname="object.batch_modifier_add", options={'REGISTER', 'UNDO'})
-def Batch_Add_Modifiers(self, context, modifier='' | prop(items=batch_add_items)):
+def Batch_Add_Modifiers(self, context, modifier=""):
     """Add modifier(s) to the selected objects"""
     bpy.ops.ed.undo_push(message="Batch Add Modifiers")
     
@@ -413,9 +460,20 @@ class VIEW3D_PT_batch_modifiers:#(bpy.types.Panel):
     
     def draw_header(self, context):
         layout = NestedLayout(self.layout)
+        batch_modifiers = addon.external.modifiers
+        batch_modifiers.refresh(context)
         with layout.row(True):
-            layout.operator_menu_enum("object.batch_modifier_add", "modifier", icon='ZOOMIN', text="")
+            with layout.row():
+                layout.menu("OBJECT_MT_batch_modifier_add", icon='ZOOMIN', text="")
+            #with layout.row():
+            #    layout.operator("view3d.pick_modifiers", icon='EYEDROPPER', text="")
+            #with layout.row():
+            #    layout.operator("object.batch_modifier_copy", icon='COPYDOWN', text="")
+            #with layout.row():
+            #    layout.operator("object.batch_modifier_paste", icon='PASTEDOWN', text="")
             layout.operator("view3d.pick_modifiers", icon='EYEDROPPER', text="")
+            layout.operator("object.batch_modifier_copy", icon='COPYDOWN', text="")
+            layout.operator("object.batch_modifier_paste", icon='PASTEDOWN', text="")
     
     def draw(self, context):
         layout = NestedLayout(self.layout)
