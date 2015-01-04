@@ -51,6 +51,8 @@ from {0}dairin0d.utils_addon import AddonManager
 
 addon = AddonManager()
 
+# moth3r asks to be able to add Batch panel also to the right shelf
+
 refresh_interval = 0.5
 
 # adapted from the Copy Attributes Menu addon
