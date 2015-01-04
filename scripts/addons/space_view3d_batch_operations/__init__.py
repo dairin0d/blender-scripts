@@ -52,6 +52,7 @@ from {0}dairin0d.utils_addon import AddonManager
 addon = AddonManager()
 
 # moth3r asks to be able to add Batch panel also to the right shelf
+# TODO: copy/paste modifiers; constraints; materials (+completely remove immediately)
 
 refresh_interval = 0.5
 
