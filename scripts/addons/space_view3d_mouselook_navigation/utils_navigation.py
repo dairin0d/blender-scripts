@@ -78,7 +78,8 @@ def calc_selection_center(context): # View3D area is assumed
         # Currently there is no API for element.select
         #positions.extend(elem.co for elem in active_object.data.elements if elem.select)
     elif context_mode == 'EDIT_LATTICE':
-        positions.extend(point.co for point in active_object.data.points if point.select)
+        # Not point.co! point.co returns very strange and often very big numbers
+        positions.extend(point.co_deform for point in active_object.data.points if point.select)
     elif context_mode == 'EDIT_ARMATURE':
         for bone in active_object.data.edit_bones:
             if bone.select_head:

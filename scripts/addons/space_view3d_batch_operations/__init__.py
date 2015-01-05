@@ -20,8 +20,8 @@
 bl_info = {
     "name": "Batch Operations",
     "description": "Batch control of modifiers, etc.",
-    "author": "dairin0d",
-    "version": (0, 1, 0),
+    "author": "dairin0d, moth3r",
+    "version": (0, 1, 1),
     "blender": (2, 7, 0),
     "location": "View3D > Batch category in Tools panel",
     "warning": "",
@@ -53,9 +53,9 @@ from {0}dairin0d.utils_addon import AddonManager
 addon = AddonManager()
 
 # moth3r asks to be able to add Batch panel also to the right shelf
-# TODO: constraints; materials (+completely remove immediately)
-
-refresh_interval = 0.5
+# TODO:
+# materials (+completely remove immediately)
+# constraints
 
 # adapted from the Copy Attributes Menu addon
 def copyattrs(src, dst, filter=""):
@@ -118,6 +118,41 @@ class Pick_Base:
             return ({'FINISHED'} if confirm else {'CANCELLED'})
         return {'RUNNING_MODAL'}
 
+# ============================== AUTOREFRESH =============================== #
+#============================================================================#
+@addon.Operator(idname="object.batch_refresh")
+def batch_refresh(self, context):
+    """Force batch UI refresh"""
+    addon.external.modifiers.refresh(context, True)
+
+@addon.PropertyGroup
+class AutorefreshPG:
+    autorefresh = True | prop("Enable auto-refresh")
+    refresh_interval = 0.5 | prop("Auto-refresh Interval", name="Refresh Interval", min=0.0)
+
+@addon.Panel
+class VIEW3D_PT_batch_autorefresh:
+    bl_category = "Batch"
+    bl_context = "objectmode"
+    bl_label = "Batch operations"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'TOOLS'
+    
+    #def draw_header(self, context):
+    #    layout = NestedLayout(self.layout)
+    
+    def draw(self, context):
+        layout = NestedLayout(self.layout)
+        batch_autorefresh = addon.preferences.autorefresh
+        
+        with layout.row():
+            with layout.row(True):
+                layout.prop(batch_autorefresh, "autorefresh", text="", icon='PREVIEW_RANGE', toggle=True)
+                layout.row(True)(active=batch_autorefresh.autorefresh).prop(batch_autorefresh, "refresh_interval", text="Interval", icon='PREVIEW_RANGE')
+            layout.operator("object.batch_refresh", text="", icon='FILE_REFRESH')
+
+addon.Preferences.autorefresh = AutorefreshPG | prop()
+
 # =============================== MODIFIERS ================================ #
 #============================================================================#
 @addon.Operator(idname="view3d.pick_modifiers")
@@ -165,6 +200,7 @@ def Batch_Copy_Modifiers(self, context, **kwargs):
         md_infos = [attrs_to_dict(md) for md in obj.modifiers]
         json_data = {"content":"Blender:object.modifiers", "items":md_infos}
         ModifiersPG.clipbuffer = json_data
+        self.report({'INFO'}, "Modifiers copied")
 
 @addon.Operator(idname="object.batch_modifier_paste", options={'REGISTER', 'UNDO'})
 def Batch_Paste_Modifiers(self, context):
@@ -262,6 +298,8 @@ def Batch_Remove_Modifiers(self, context, modifier=""):
 class ModifierPG:
     idname = "" | prop()
     
+    count = 0 | prop()
+    
     initialized = False | prop()
     
     def gen_show_update(name):
@@ -313,10 +351,14 @@ class ModifiersPG:
     
     clipbuffer = None
     
-    def refresh(self, context):
-        if time.clock() < self.clock:
-            return # prevent refresh-each-frame situation
-        self.clock = time.clock() + refresh_interval
+    def refresh(self, context, force=False):
+        batch_autorefresh = addon.preferences.autorefresh
+        
+        if not force:
+            if (not batch_autorefresh.autorefresh) or (time.clock() < self.clock):
+                return # prevent refresh-each-frame situation
+        
+        self.clock = time.clock() + batch_autorefresh.refresh_interval
         
         infos = {}
         for obj in context.selected_objects:
@@ -340,6 +382,7 @@ class ModifiersPG:
             item = self.items.add()
             item.name = info["name"].replace(" Modifier", "")
             item.idname = info["type"]
+            item.count = info["count"]
             item.from_info_toggle(info, "show_expanded")
             item.from_info_toggle(info, "show_render")
             item.from_info_toggle(info, "show_viewport")
@@ -360,8 +403,10 @@ class ModifiersPG:
             if identifier is None:
                 identifier = md.bl_rna.identifier
             
-            info = dict(type=md_type, name=name, identifier=identifier)
+            info = dict(type=md_type, name=name, identifier=identifier, count=0)
             infos[md_type] = info
+        
+        info["count"] = info["count"] + 1
         
         self.extract_info_toggle(info, md, "show_expanded")
         self.extract_info_toggle(info, md, "show_render")
@@ -453,7 +498,9 @@ class ModifiersPG:
                     op = layout.operator("object.batch_modifier_ensure", text="", icon=icon)
                     op.modifier = item.idname or self.all_idnames
                     
-                    op = layout.operator("object.batch_modifier_apply", text=(item.name or "(All)"))
+                    count = (item.count if all_enabled else 0)
+                    text = "{} ({})".format(item.name or "(All)", count)
+                    op = layout.operator("object.batch_modifier_apply", text=text)
                     op.modifier = item.idname
                     
                     op = layout.operator("object.batch_modifier_remove", icon='X', text="")
@@ -487,8 +534,33 @@ class VIEW3D_PT_batch_modifiers:
 addon.External.modifiers = ModifiersPG | -prop()
 #============================================================================#
 
+@addon.Operator(idname="object.batch_properties_copy", space_type='PROPERTIES')
+def Batch_Properties_Copy(self, context):
+    properties_context = context.space_data.context
+    if properties_context == 'MODIFIER':
+        Batch_Copy_Modifiers(self, context)
+    #print(context.space_data.type)
+    #print(context.space_data.context)
+
+@addon.Operator(idname="object.batch_properties_paste", space_type='PROPERTIES')
+def Batch_Properties_Copy(self, context):
+    properties_context = context.space_data.context
+    if properties_context == 'MODIFIER':
+        Batch_Paste_Modifiers(self, context)
+    #print(context.space_data.type)
+    #print(context.space_data.context)
+
 def register():
     addon.register()
+    
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc:
+        km = kc.keymaps.new(name="Window")
+        kmi = km.keymap_items.new("object.batch_properties_copy", 'C', 'PRESS', ctrl=True)
+        kmi = km.keymap_items.new("object.batch_properties_paste", 'V', 'PRESS', ctrl=True)
 
 def unregister():
+    KeyMapUtils.remove("object.batch_properties_copy")
+    KeyMapUtils.remove("object.batch_properties_paste")
+    
     addon.unregister()

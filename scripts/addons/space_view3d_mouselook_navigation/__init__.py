@@ -20,8 +20,8 @@
 bl_info = {
     "name": "Mouselook Navigation",
     "description": "Alternative 3D view navigation",
-    "author": "dairin0d",
-    "version": (1, 0, 2),
+    "author": "dairin0d, moth3r",
+    "version": (1, 0, 3),
     "blender": (2, 7, 0),
     "location": "View3D > orbit/pan/dolly/zoom/fly/walk",
     "warning": "",
@@ -91,21 +91,21 @@ In the wiki:
 * other peculiarities of the algorithms I use?
 
 TODO:
+* make mouselook temporary toggle saveable
+* make settings saveable in file config
+* it's impossible to select lattice vertices with LMB when ZBrush preset is used (use zbuffer)
 * "release/build" script (copy files to dest folder without __pycache__ and *.pyc, create zip)
 * don't remove->add add keymap items when the new one is added to the end
 * full-screen grabbing of depth buffer on each redraw?
 * remove default keymap behavior and use a default preset instead?
 * Load/Save/Import/Export presets
 * Generic solution for keymap registration
-* [DONE, as a proof-of-concept] key presets
-** Blender keys preset
-** ZBrush Keys preset (needs to be set up at least for Mesh and Sculpt modes too)
+* [DONE] bug when rotating in lattice edit mode
+* [DONE] key presets (Blender, ZBrush)
 * [DONE] installing doesn't work (dairin0d couldn't be found)
 * [DONE] option to turn off second crosshair? (+put them in N panel)
 * [DONE] ZBrush zooming should be inverted compared to Blender
-* [DONE] in zbrush setup, moth3r complains that there is a bit of panning before zoom mode is entered (reminder: pan is Alt, zoom is !Alt)
-  in ZBrush, the position is reset to the starting position when zooming is enabled
-  (if then switched to pan, it will snap to the position of the last pan)
+* [DONE] in ZBrush, the position is reset to the starting position when zooming is enabled
 * [DONE] in Camera View, shift+drag changes view_camera_offset and mouse wheel changes view_camera_zoom (unless lock_camera is True); in Fly/FPS modes, Lock Camera To View should be ignored
 * [DONE] on exiting Fly/FPS modes, mouse should be set to focus projection
 * [DONE] stable sv.focus projection without actually projecting (use camera offset/zoom)
@@ -254,9 +254,7 @@ class MouselookNavigation:
     
     @classmethod
     def poll(cls, context):
-        wm = context.window_manager
-        settings = addon.external
-        if not settings.is_enabled:
+        if not addon.preferences.is_enabled:
             return False
         return (context.space_data.type == 'VIEW_3D')
     
@@ -584,7 +582,7 @@ class MouselookNavigation:
         fps_speed = self.calc_FPS_speed(walk_speed_factor)
         if fps_speed.magnitude > 0:
             if not self.sv.is_perspective:
-                self.change_distance(fps_speed.y * speed_zoom*(-4), use_zoom_to_mouse)
+                self.change_distance((fps_speed.y * speed_zoom.y) * (-4), use_zoom_to_mouse)
                 fps_speed.y = 0
             speed_move *= dt
             abs_speed = self.abs_fps_speed(fps_speed.x, fps_speed.y, fps_speed.z, speed_move, use_gravity)
@@ -1304,7 +1302,7 @@ def autoreg_keymaps_preset_load(self, context, preset_id = '' | prop("Preset ID"
 @addon.Panel(idname="VIEW3D_PT_mouselook_navigation", space_type='VIEW_3D', region_type='UI', label="Mouselook Nav.")
 class VIEW3D_PT_mouselook_navigation:
     def draw_header(self, context):
-        self.layout.prop(addon.external, "is_enabled", text="")
+        self.layout.prop(addon.preferences, "is_enabled", text="")
     
     def draw(self, context):
         layout = NestedLayout(self.layout)
@@ -1393,6 +1391,8 @@ class ThisAddonPreferences:
     use_universal_input_settings = True | prop("Use same settings for each keymap", name="Universal")
     universal_input_settings = MouselookNavigation_InputSettings | prop()
     
+    is_enabled = True | prop("Enable/disable Mouselook Navigation", name="Enabled")
+    
     flips = NavigationDirectionFlip | prop()
     
     zoom_speed_modifier = 1.0 | prop("Zooming speed", name="Zoom speed")
@@ -1471,8 +1471,6 @@ class ThisAddonPreferences:
             inp_set.draw(layout)
 
 def register():
-    addon.External.is_enabled = True | -prop("Enable/disable Mouselook Navigation", name="Enabled")
-    
     addon.register()
     
     addon.draw_handler_add(bpy.types.SpaceView3D, draw_callback_px, (None, None), 'WINDOW', 'POST_PIXEL')

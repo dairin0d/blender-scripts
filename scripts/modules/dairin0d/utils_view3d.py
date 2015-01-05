@@ -496,6 +496,7 @@ class SmartView3D:
         near = origin + view_dir * near
         far = origin + view_dir * far
         
+        # Just to be sure (sometimes scene.ray_cast sayid that ray start/end aren't 3D)
         a = region_2d_to_location_3d(region, rv3d, Vector(xy).to_2d(), near).to_3d()
         b = region_2d_to_location_3d(region, rv3d, Vector(xy).to_2d(), far).to_3d()
         return a, b
