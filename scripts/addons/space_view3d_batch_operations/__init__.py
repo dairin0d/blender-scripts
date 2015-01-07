@@ -21,7 +21,7 @@ bl_info = {
     "name": "Batch Operations",
     "description": "Batch control of modifiers, etc.",
     "author": "dairin0d, moth3r",
-    "version": (0, 1, 1),
+    "version": (0, 1, 2),
     "blender": (2, 7, 0),
     "location": "View3D > Batch category in Tools panel",
     "warning": "",
@@ -45,7 +45,8 @@ except ImportError:
 
 exec("""
 from {0}dairin0d.utils_view3d import SmartView3D
-from {0}dairin0d.utils_ui import NestedLayout, ui_context_under_coord
+from {0}dairin0d.utils_userinput import KeyMapUtils
+from {0}dairin0d.utils_ui import NestedLayout
 from {0}dairin0d.bpy_inspect import prop, BlRna
 from {0}dairin0d.utils_addon import AddonManager
 """.format(dairin0d_location))
@@ -54,8 +55,14 @@ addon = AddonManager()
 
 # moth3r asks to be able to add Batch panel also to the right shelf
 # TODO:
-# materials (+completely remove immediately)
-# constraints
+# Some feedback from twitter:
+#   "I like the multi-edit feature, would be nice if I the user could checkmark modifiers on the list to be copied and paste additively"
+#   That could be a nice feature.
+# Make sure copy/pasting doesn't crash Blender after Undo (seems like it doesn't crash, but pasted references to objects are invalid)
+#   make a general mechanism of serializing/deserializing links to ID blocks?
+# Materials (+completely remove immediately)
+# Batch apply operator (+operator search field)
+# Constraints
 
 # adapted from the Copy Attributes Menu addon
 def copyattrs(src, dst, filter=""):
@@ -92,16 +99,13 @@ class Pick_Base:
         confirm = (event.type == 'LEFTMOUSE') and (event.value == 'PRESS')
         
         mouse = Vector((event.mouse_x, event.mouse_y))
-        ui_context = ui_context_under_coord(mouse.x, mouse.y, 1)
         
         raycast_result = None
-        if ui_context:
-            if ui_context.area.type == 'VIEW_3D':
-                if ui_context.region_data:
-                    sv = SmartView3D(ui_context)
-                    mouse_region = mouse - sv.region_rect()[0]
-                    ray = sv.ray(mouse_region)
-                    raycast_result = context.scene.ray_cast(*ray)
+        sv = SmartView3D((mouse.x, mouse.y, 0))
+        if sv:
+            #raycast_result = sv.ray_cast(mouse, coords='WINDOW')
+            select_result = sv.select(mouse, coords='WINDOW')
+            raycast_result = (bool(select_result[0]), select_result[0])
         
         obj = None
         if raycast_result and raycast_result[0]:
@@ -118,54 +122,24 @@ class Pick_Base:
             return ({'FINISHED'} if confirm else {'CANCELLED'})
         return {'RUNNING_MODAL'}
 
-# ============================== AUTOREFRESH =============================== #
-#============================================================================#
-@addon.Operator(idname="object.batch_refresh")
-def batch_refresh(self, context):
-    """Force batch UI refresh"""
-    addon.external.modifiers.refresh(context, True)
-
-@addon.PropertyGroup
-class AutorefreshPG:
-    autorefresh = True | prop("Enable auto-refresh")
-    refresh_interval = 0.5 | prop("Auto-refresh Interval", name="Refresh Interval", min=0.0)
-
-@addon.Panel
-class VIEW3D_PT_batch_autorefresh:
-    bl_category = "Batch"
-    bl_context = "objectmode"
-    bl_label = "Batch operations"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'TOOLS'
-    
-    #def draw_header(self, context):
-    #    layout = NestedLayout(self.layout)
-    
-    def draw(self, context):
-        layout = NestedLayout(self.layout)
-        batch_autorefresh = addon.preferences.autorefresh
-        
-        with layout.row():
-            with layout.row(True):
-                layout.prop(batch_autorefresh, "autorefresh", text="", icon='PREVIEW_RANGE', toggle=True)
-                layout.row(True)(active=batch_autorefresh.autorefresh).prop(batch_autorefresh, "refresh_interval", text="Interval", icon='PREVIEW_RANGE')
-            layout.operator("object.batch_refresh", text="", icon='FILE_REFRESH')
-
-addon.Preferences.autorefresh = AutorefreshPG | prop()
-
 # =============================== MODIFIERS ================================ #
 #============================================================================#
 @addon.Operator(idname="view3d.pick_modifiers")
 class Pick_Modifiers(Pick_Base):
     """Pick modifier(s) from the object under mouse"""
     
+    @classmethod
+    def poll(cls, context):
+        return (context.mode == 'OBJECT')
+    
     def obj_to_info(self, obj):
-        return ", ".join(md.bl_rna.name.replace(" Modifier", "") for md in obj.modifiers)
+        txt = ", ".join(md.bl_rna.name.replace(" Modifier", "") for md in obj.modifiers)
+        return (txt or "<No modifiers>")
     
     def on_confirm(self, context, obj):
         bpy.ops.ed.undo_push(message="Pick Modifiers")
         
-        Batch_Copy_Modifiers(None, context, object=obj) # also save to clipboard
+        Batch_Copy_Modifiers(self, context, object=obj) # also save to clipboard
         
         for obj2 in context.selected_objects:
             if obj2 == obj:
@@ -506,33 +480,81 @@ class ModifiersPG:
                     op = layout.operator("object.batch_modifier_remove", icon='X', text="")
                     op.modifier = item.idname
 
-@addon.Panel
 class VIEW3D_PT_batch_modifiers:
     bl_category = "Batch"
     bl_context = "objectmode"
-    bl_label = "Modifiers"
+    bl_label = "Batch Modifiers"
     bl_space_type = 'VIEW_3D'
-    bl_region_type = 'TOOLS'
-    
-    def draw_header(self, context):
-        layout = NestedLayout(self.layout)
-        batch_modifiers = addon.external.modifiers
-        batch_modifiers.refresh(context)
-        with layout.row(True):
-            with layout.row():
-                layout.menu("OBJECT_MT_batch_modifier_add", icon='ZOOMIN', text="")
-            layout.operator("view3d.pick_modifiers", icon='EYEDROPPER', text="")
-            layout.operator("object.batch_modifier_copy", icon='COPYDOWN', text="")
-            layout.operator("object.batch_modifier_paste", icon='PASTEDOWN', text="")
     
     def draw(self, context):
         layout = NestedLayout(self.layout)
         batch_modifiers = addon.external.modifiers
         batch_modifiers.refresh(context)
+        
+        with layout.row(True):
+            layout.menu("OBJECT_MT_batch_modifier_add", icon='ZOOMIN', text="")
+            layout.operator("view3d.pick_modifiers", icon='EYEDROPPER', text="")
+            layout.operator("object.batch_modifier_copy", icon='COPYDOWN', text="")
+            layout.operator("object.batch_modifier_paste", icon='PASTEDOWN', text="")
+        
         batch_modifiers.draw(layout)
+
+@addon.Panel(region_type = 'TOOLS')
+class VIEW3D_PT_batch_modifiers_left(VIEW3D_PT_batch_modifiers):
+    @classmethod
+    def poll(cls, context):
+        return addon.preferences.use_panel_left
+
+@addon.Panel(region_type = 'UI')
+class VIEW3D_PT_batch_modifiers_right(VIEW3D_PT_batch_modifiers):
+    @classmethod
+    def poll(cls, context):
+        return addon.preferences.use_panel_right
 
 addon.External.modifiers = ModifiersPG | -prop()
 #============================================================================#
+
+# ============================== AUTOREFRESH =============================== #
+#============================================================================#
+@addon.Operator(idname="object.batch_refresh")
+def batch_refresh(self, context):
+    """Force batch UI refresh"""
+    addon.external.modifiers.refresh(context, True)
+
+@addon.PropertyGroup
+class AutorefreshPG:
+    autorefresh = True | prop("Enable auto-refresh")
+    refresh_interval = 0.5 | prop("Auto-refresh Interval", name="Refresh Interval", min=0.0)
+
+class VIEW3D_PT_batch_autorefresh:
+    bl_category = "Batch"
+    bl_context = "objectmode"
+    bl_label = "Batch Refresh"
+    bl_space_type = 'VIEW_3D'
+    
+    def draw(self, context):
+        layout = NestedLayout(self.layout)
+        batch_autorefresh = addon.preferences.autorefresh
+        
+        with layout.row():
+            with layout.row(True):
+                layout.prop(batch_autorefresh, "autorefresh", text="", icon='PREVIEW_RANGE', toggle=True)
+                layout.row(True)(active=batch_autorefresh.autorefresh).prop(batch_autorefresh, "refresh_interval", text="Interval", icon='PREVIEW_RANGE')
+            layout.operator("object.batch_refresh", text="", icon='FILE_REFRESH')
+
+@addon.Panel(region_type = 'TOOLS')
+class VIEW3D_PT_batch_autorefresh_left(VIEW3D_PT_batch_autorefresh):
+    @classmethod
+    def poll(cls, context):
+        return addon.preferences.use_panel_left
+
+@addon.Panel(region_type = 'UI')
+class VIEW3D_PT_batch_autorefresh_right(VIEW3D_PT_batch_autorefresh):
+    @classmethod
+    def poll(cls, context):
+        return addon.preferences.use_panel_right
+
+addon.Preferences.autorefresh = AutorefreshPG | prop()
 
 @addon.Operator(idname="object.batch_properties_copy", space_type='PROPERTIES')
 def Batch_Properties_Copy(self, context):
@@ -549,6 +571,19 @@ def Batch_Properties_Copy(self, context):
         Batch_Paste_Modifiers(self, context)
     #print(context.space_data.type)
     #print(context.space_data.context)
+
+@addon.Preferences.Include
+class ThisAddonPreferences:
+    use_panel_left = True | prop("Show in T-panel", name="T (left panel)")
+    use_panel_right = False | prop("Show in N-panel", name="N (right panel)")
+    
+    def draw(self, context):
+        layout = NestedLayout(self.layout)
+        
+        with layout.row():
+            layout.label("Show in:")
+            layout.prop(self, "use_panel_left")
+            layout.prop(self, "use_panel_right")
 
 def register():
     addon.register()
