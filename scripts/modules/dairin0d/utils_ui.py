@@ -16,15 +16,6 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
-# <pep8 compliant>
-
-__all__ = (
-    "wrap_text",
-    "messagebox",
-    "NestedLayout",
-    "tag_redraw",
-    )
-
 import bpy
 import blf
 
@@ -112,6 +103,9 @@ def wrap_text(text, width, fontid=0, indent=0):
             max_x = split_line(width, indent, max_x, line, lines, fontid)
     return lines, max_x
 #============================================================================#
+
+# Note: making a similar wrapper for Operator.report is impossible,
+# since Blender only shows the report from the currently executing operator.
 
 # ===== MESSAGEBOX ===== #
 class INFO_OT_messagebox(bpy.types.Operator):

@@ -15,8 +15,6 @@
 #
 #  ***** END GPL LICENSE BLOCK *****
 
-# <pep8 compliant>
-
 from mathutils import Color, Vector, Matrix, Quaternion, Euler
 
 import math

@@ -15,8 +15,6 @@
 #
 #  ***** END GPL LICENSE BLOCK *****
 
-# <pep8 compliant>
-
 bl_info = {
     "name": "Mouselook Navigation",
     "description": "Alternative 3D view navigation",
@@ -72,31 +70,31 @@ ISSUES:
 * Blender's trackball
 * ortho-grid/quadview-clip/projection-name display is not updated (do the issues disappear in 2.73 / Gooseberry branch?)
 * Blender doesn't provide information about current selection center, last paint/sculpt stroke, what non-geometry objects are under the mouse
+* zoom/rotate around last paint/sculpt stroke? (impossible: sculpt/paint is modal, and Blender provides mouse coordinates only for invoke/modal operator callbacks)
 
 In the wiki:
 * explain the rules for key setup (how the text is interpreted)
 * explain fly/walk modes (e.g. what the scrollwheel does)
 * other peculiarities of the algorithms I use?
 * put a warning that if "emulate 3 mouse button" is enabled, the Alt key pan won't work in ZBrush preset (in this case, Alt+LMB will emulate middle mouse button)
-
-System:
-* transparent preferences/external/internal get/set? (so that the user code doesn't need to know where exactly each setting is stored). BUT: will it work with layout code? (layout.prop(data, prop_name))
-* make it possible to use the same addon object in addon's imported submodules (use __new__ instead of __init__ ?)
-* [DONE] "release/build" script (copy files to dest folder without __pycache__ and *.pyc, create zip)
+* put a warning that User Preferences make the addon slow
 
 Config/Presets:
 * Load/Save/Import/Export config (+move almost everything from preferences to config)
 * Load/Save/Import/Export presets
 
-Depth/Ray casting:
-* [DONE] make possible to select lattice vertices with LMB when ZBrush preset is used (use zbuffer); use up-to-date geometry in Sculpt mode
-* [DONE] full-screen grabbing of depth buffer on each redraw?
-* zoom/rotate around last paint/sculpt stroke? (record last depth and raycast result under mouse?)
-
 Keymaps:
 * remove default keymap behavior and use a default preset instead?
 * Generic solution for keymap registration
 
+* Add optional shortcuts to move focus to certain locations? (current orbit point, active element, selection center, cursor, world origin)
+* Navigation history?
+* Create camer here?
+
+* [DONE] make it possible to use the same addon object in addon's imported submodules (use __new__ instead of __init__ ?)
+* [DONE] "release/build" script (copy files to dest folder without __pycache__ and *.pyc, create zip)
+* [DONE] make possible to select lattice vertices with LMB when ZBrush preset is used (use zbuffer); use up-to-date geometry in Sculpt mode
+* [DONE] full-screen grabbing of depth buffer on each redraw?
 * [DONE] don't remove->add add keymap items when the new one is added to the end
 * [DONE] in edit/paint/sculpt modes, when nothing is selected, rotate using the currently selected object's origin
 * [DONE] make mouselook temporary toggle saveable

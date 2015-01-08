@@ -15,10 +15,6 @@
 #
 #  ***** END GPL LICENSE BLOCK *****
 
-# <pep8 compliant>
-
-#__all__ = ("module1", "module2", etc.) # in case we want to not export something
-
 import bpy
 import bgl
 

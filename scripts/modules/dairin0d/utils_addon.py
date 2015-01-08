@@ -15,8 +15,6 @@
 #
 #  ***** END GPL LICENSE BLOCK *****
 
-# <pep8 compliant>
-
 import os
 import itertools
 import json
@@ -50,8 +48,15 @@ class AddonManager:
     _hack_classes_count = 0
     
     # ===== INITIALIZATION ===== #
-    def __init__(self, name=None, path=None, config=None):
-        info = self._init_info(name, path, config)
+    def __new__(cls, name=None, path=None, config=None):
+        varname = "__<blender-addon>__"
+        info = AddonManager._init_info(name, path, config, varname)
+        
+        self = info.get("addon")
+        if self is not None: return self # one alreasy exists for this addon
+        
+        self = object.__new__(cls)
+        self.status = 'INITIALIZATION'
         
         self.name = info["name"] # displayable name
         self.path = info["path"] # directory of the main file
@@ -64,6 +69,10 @@ class AddonManager:
         self.attributes = {}
         
         self._init_config_storages()
+        
+        info["module_globals"][varname] = self
+        
+        return self
     
     def _init_config_storages(self):
         #self.storage_name = "<%s>" % self.module_name
@@ -87,31 +96,47 @@ class AddonManager:
         self._Internal = self.PropertyGroup(type("%s-internal-storage" % self.module_name, (), {"Include":Include}))
         setattr(self.Internal, self._ID_counter_key, 0 | prop())
     
-    def _init_info(self, name, path, config):
-        # Search for the topmost module containing bl_info.
-        # If couldn't find one, derive path and name
-        # from the topmost module's __file__.
-        main_path = None
+    # If this is a textblock, its module will be topmost
+    # and will have __name__ == "__main__".
+    # If this is an addon in the scripts directory, it will
+    # be recognized by blender only if it contains bl_info.
+    @classmethod
+    def _init_info(cls, name, path, config, varname):
+        module_globals = None
+        module_locals = None
         module_name = None
-        f_globals = [fr[0].f_globals for fr in inspect.stack()]
-        for g in reversed(f_globals):
-            if not main_path:
-                main_path = g.get("__file__", "")
-                module_name = g.get("__name__", "").split(".")[0]
-                _path = main_path
+        
+        for frame_record in reversed(inspect.stack()):
+            # Frame record is a tuple of 6 elements:
+            # (frame_obj, filename, line_id, func_name, context_lines, context_line_id)
+            frame = frame_record[0]
+            
+            if not module_name:
+                module_globals = frame.f_globals
+                module_locals = frame.f_locals
+                module_name = module_globals.get("__name__", "").split(".")[0]
+                _path = module_globals.get("__file__", "")
                 _name = os.path.splitext(os.path.basename(_path))[0]
             
-            info = g.get("bl_info")
+            info = frame.f_globals.get("bl_info")
             if info:
-                module_name = g.get("__name__", "").split(".")[0]
-                _path = g.get("__file__", "")
+                module_globals = frame.f_globals
+                module_locals = frame.f_locals
+                module_name = module_globals.get("__name__", "").split(".")[0]
+                _path = module_globals.get("__file__", "")
                 _name = info.get("name", _name)
                 break
+        
+        if varname in module_globals:
+            addon = module_globals[varname]
+            if isinstance(addon, AddonManager):
+                if addon.status == 'INITIALIZATION':
+                    return dict(addon=addon) # use this addon object
         
         is_textblock = (module_name == "__main__")
         if is_textblock:
             module_name = os.path.splitext(os.path.basename(_path))[0]
-            config_path = self._textblock_prefix
+            config_path = cls._textblock_prefix
         else:
             config_path = bpy.utils.user_resource('CONFIG', module_name)
         
@@ -129,7 +154,7 @@ class AddonManager:
         
         if not os.path.isdir(path):
             # No such directory in the filesystem
-            path = self._textblock_prefix
+            path = cls._textblock_prefix
         
         if not config:
             config = (bpy.path.clean_name(module_name) if is_textblock else "config") + ".json"
@@ -137,7 +162,8 @@ class AddonManager:
         config_path = os.path.join(config_path, config)
         
         return dict(name=name, path=path, config_path=config_path,
-                    module_name=module_name, is_textblock=is_textblock)
+                    module_name=module_name, is_textblock=is_textblock,
+                    module_locals=module_locals, module_globals=module_globals)
     #========================================================================#
     
     # ===== PREFERENCES / EXTERNAL / INTERNAL ===== #
@@ -521,6 +547,8 @@ class AddonManager:
     
     # ===== REGISTER / UNREGISTER ===== #
     def register(self, load_config=False):
+        self.status = 'REGISTRATION'
+        
         refs = (bpy.props.PointerProperty, bpy.props.CollectionProperty)
         
         # External/Internal classes are added at AddonManager
@@ -588,8 +616,12 @@ class AddonManager:
         
         if load_config:
             self.external_load()
+        
+        self.status = 'REGISTERED'
     
     def unregister(self):
+        self.status = 'UNREGISTRATION'
+        
         self.attributes.clear()
         
         self.remove_all()
@@ -599,6 +631,8 @@ class AddonManager:
         # Unregister classes
         for cls in reversed(self.classes):
             bpy.utils.unregister_class(cls)
+        
+        self.status = 'UNREGISTERED'
     #========================================================================#
     
     def _wrap_enum_on_item_invoke(self, prop_info):
