@@ -30,6 +30,10 @@ bl_info = {
     "category": "3D View"}
 #============================================================================#
 
+if "dairin0d" in locals():
+    import imp
+    imp.reload(dairin0d)
+
 import bpy
 
 import time
@@ -53,16 +57,25 @@ from {0}dairin0d.utils_addon import AddonManager
 
 addon = AddonManager()
 
-# moth3r asks to be able to add Batch panel also to the right shelf
-# TODO:
-# Some feedback from twitter:
-#   "I like the multi-edit feature, would be nice if I the user could checkmark modifiers on the list to be copied and paste additively"
-#   That could be a nice feature.
-# Make sure copy/pasting doesn't crash Blender after Undo (seems like it doesn't crash, but pasted references to objects are invalid)
-#   make a general mechanism of serializing/deserializing links to ID blocks?
-# Materials (+completely remove immediately)
-# Batch apply operator (+operator search field)
-# Constraints
+"""
+TODO:
+Some feedback from twitter:
+  "I like the multi-edit feature, would be nice if I the user could checkmark modifiers on the list to be copied and paste additively"
+  That could be a nice feature.
+Make sure copy/pasting doesn't crash Blender after Undo (seems like it doesn't crash, but pasted references to objects are invalid)
+  make a general mechanism of serializing/deserializing links to ID blocks?
+Materials (+completely remove immediately)
+Batch apply operator (+operator search field)
+Constraints
+
+Materials:
+Add (only existing? on also new?), Pick, Copy, Paste
+Batch set "Link to": Data or Object
+use_fake_user on/off?
+Replace with other material in selected objects
+Remove from selected objects
+Remove completely from .blend
+"""
 
 # adapted from the Copy Attributes Menu addon
 def copyattrs(src, dst, filter=""):
@@ -555,6 +568,7 @@ class VIEW3D_PT_batch_autorefresh_right(VIEW3D_PT_batch_autorefresh):
         return addon.preferences.use_panel_right
 
 addon.Preferences.autorefresh = AutorefreshPG | prop()
+#============================================================================#
 
 @addon.Operator(idname="object.batch_properties_copy", space_type='PROPERTIES')
 def Batch_Properties_Copy(self, context):

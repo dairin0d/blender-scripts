@@ -30,21 +30,10 @@ bl_info = {
     "category": "3D View"}
 #============================================================================#
 
-"""
-# This doesn't seem to work at all
-if "bpy" in locals():
+if "dairin0d" in locals():
     import imp
-    if "dairin0d" in locals():
-        imp.reload(dairin0d)
-    if "bpy_inspect" in locals():
-        imp.reload(bpy_inspect)
-    if "utils_navigation" in locals():
-        imp.reload(utils_navigation)
-else:
-    import dairin0d
-    from dairin0d import bpy_inspect
-    from . import utils_navigation
-"""
+    imp.reload(dairin0d)
+    imp.reload(utils_navigation)
 
 import bpy
 import bgl
@@ -93,7 +82,7 @@ In the wiki:
 System:
 * transparent preferences/external/internal get/set? (so that the user code doesn't need to know where exactly each setting is stored). BUT: will it work with layout code? (layout.prop(data, prop_name))
 * make it possible to use the same addon object in addon's imported submodules (use __new__ instead of __init__ ?)
-* "release/build" script (copy files to dest folder without __pycache__ and *.pyc, create zip)
+* [DONE] "release/build" script (copy files to dest folder without __pycache__ and *.pyc, create zip)
 
 Config/Presets:
 * Load/Save/Import/Export config (+move almost everything from preferences to config)

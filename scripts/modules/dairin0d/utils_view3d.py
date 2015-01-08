@@ -818,6 +818,10 @@ class SmartView3D:
     del __get
     del __set
 
+#============================================================================#
+if "ZBufferRecorder" in locals():
+    bpy.types.SpaceView3D.draw_handler_remove(ZBufferRecorder.handler, 'WINDOW')
+
 # Blender has a tendency to clear the contents of Z-buffer during its default operation,
 # so user operators usually don't have ability to use depth buffer at their invocation.
 # This hack attempts to alleviate this problem, at the cost of likely stalling GL pipeline.

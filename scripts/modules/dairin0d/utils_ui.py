@@ -30,8 +30,6 @@ import blf
 
 from mathutils import Color, Vector, Matrix, Quaternion, Euler
 
-from .utils_python import AttributeHolder
-
 #============================================================================#
 
 # ===== SPLIT TEXT TO LINES ===== #
