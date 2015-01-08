@@ -55,7 +55,6 @@ from {0}dairin0d.bpy_inspect import prop, BlRna
 from {0}dairin0d.utils_addon import AddonManager
 """.format(dairin0d_location))
 
-#from . import batch_common
 from .batch_common import copyattrs, attrs_to_dict, dict_to_attrs, Pick_Base
 from . import batch_modifiers
 
@@ -76,9 +75,9 @@ Materials:
 Add (only existing? on also new?), Pick, Copy, Paste
 Batch set "Link to": Data or Object
 use_fake_user on/off?
-Replace with other material in selected objects
-Remove from selected objects
-Remove completely from .blend
+Replace with other material in selected/.blend
+Remove from selected/.blend
+Rename materials in selected objects by pattern?
 """
 
 @addon.Operator(idname="object.batch_properties_copy", space_type='PROPERTIES')

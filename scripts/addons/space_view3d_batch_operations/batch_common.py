@@ -133,6 +133,7 @@ class AutorefreshPG:
     autorefresh = True | prop("Enable auto-refresh")
     refresh_interval = 0.5 | prop("Auto-refresh Interval", name="Refresh Interval", min=0.0)
 
+@LeftRightPanel
 class VIEW3D_PT_batch_autorefresh:
     bl_category = "Batch"
     bl_context = "objectmode"
@@ -148,18 +149,6 @@ class VIEW3D_PT_batch_autorefresh:
                 layout.prop(batch_autorefresh, "autorefresh", text="", icon='PREVIEW_RANGE', toggle=True)
                 layout.row(True)(active=batch_autorefresh.autorefresh).prop(batch_autorefresh, "refresh_interval", text="Interval", icon='PREVIEW_RANGE')
             layout.operator("object.batch_refresh", text="", icon='FILE_REFRESH')
-
-@addon.Panel(region_type = 'TOOLS')
-class VIEW3D_PT_batch_autorefresh_left(VIEW3D_PT_batch_autorefresh):
-    @classmethod
-    def poll(cls, context):
-        return addon.preferences.use_panel_left
-
-@addon.Panel(region_type = 'UI')
-class VIEW3D_PT_batch_autorefresh_right(VIEW3D_PT_batch_autorefresh):
-    @classmethod
-    def poll(cls, context):
-        return addon.preferences.use_panel_right
 
 addon.Preferences.autorefresh = AutorefreshPG | prop()
 #============================================================================#

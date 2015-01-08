@@ -33,12 +33,11 @@ except ImportError:
 exec("""
 from {0}dairin0d.utils_view3d import SmartView3D
 from {0}dairin0d.utils_userinput import KeyMapUtils
-from {0}dairin0d.utils_ui import NestedLayout, report
+from {0}dairin0d.utils_ui import NestedLayout
 from {0}dairin0d.bpy_inspect import prop, BlRna
 from {0}dairin0d.utils_addon import AddonManager
 """.format(dairin0d_location))
 
-#from . import batch_common
 from .batch_common import copyattrs, attrs_to_dict, dict_to_attrs, Pick_Base, LeftRightPanel
 
 addon = AddonManager()
@@ -51,6 +50,13 @@ class BatchModifiers:
     @classmethod
     def clean_name(cls, md):
         return md.bl_rna.name.replace(" Modifier", "")
+    
+    @classmethod
+    def set_attr(cls, name, value, objects, modifier=""):
+        for obj in objects:
+            for md in obj.modifiers:
+                if (not modifier) or (md.type == modifier):
+                    setattr(md, name, value)
     
     @classmethod
     def clear(cls, objects):
@@ -216,18 +222,11 @@ class ModifierPG:
     
     def gen_show_update(name):
         def update(self, context):
-            if not self.initialized:
-                return
-            
+            if not self.initialized: return
             message = self.bl_rna.properties[name].description
-            bpy.ops.ed.undo_push(message=message)
-            
             value = getattr(self, name)[0]
-            for obj in context.selected_objects:
-                for md in obj.modifiers:
-                    if (not self.idname) or (md.type == self.idname):
-                        setattr(md, name, value)
-        
+            bpy.ops.ed.undo_push(message=message)
+            BatchModifiers.set_attr(name, value, context.selected_objects, self.idname)
         return update
     
     show_expanded = (True, True) | prop("Are modifier(s) expanded in the UI",
@@ -248,10 +247,9 @@ class ModifierPG:
 
 @addon.PropertyGroup
 class ModifiersPG:
-    all_types_enum = (bpy.ops.object.
+    all_types_enum = BlRna.serialize_value(bpy.ops.object.
         modifier_add.get_rna().bl_rna.
         properties["type"].enum_items)
-    all_types_enum = BlRna.serialize_value(all_types_enum)
     
     items = [ModifierPG] | prop()
     
