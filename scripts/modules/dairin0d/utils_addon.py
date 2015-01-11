@@ -1098,7 +1098,7 @@ def {0}({1}):
         resmap=_Operator_resmap, stopped_code="return {'CANCELLED'}"),
         dict(name="invoke", args=("self", "context", "event"), func_init=True, gen_init=True,
         resmap=_Operator_resmap, stopped_code="return {'CANCELLED'}",
-        extra_code="if _result == {'RUNNING_MODAL'}: context.window_manager.modal_handler_add(self)"),
+        extra_code="if 'RUNNING_MODAL' in _result: context.window_manager.modal_handler_add(self)"),
         dict(name="modal", args=("self", "context", "event"), func_init=False, gen_init=False,
         resmap=_Operator_resmap, stopped_code="return {'CANCELLED'}"),
     ]

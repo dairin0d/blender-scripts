@@ -87,9 +87,12 @@ Keymaps:
 * remove default keymap behavior and use a default preset instead?
 * Generic solution for keymap registration
 
+* In Blender 2.73, Grease Pencil can be edited (and points can be selected)
+
+* Option to create an undo record when navigating from a camera?
 * Add optional shortcuts to move focus to certain locations? (current orbit point, active element, selection center, cursor, world origin)
 * Navigation history?
-* Create camer here?
+* Create camera here?
 
 * [DONE] make it possible to use the same addon object in addon's imported submodules (use __new__ instead of __init__ ?)
 * [DONE] "release/build" script (copy files to dest folder without __pycache__ and *.pyc, create zip)

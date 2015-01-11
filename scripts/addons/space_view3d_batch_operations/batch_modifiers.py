@@ -70,8 +70,8 @@ class BatchModifiers:
     
     @classmethod
     def ensure(cls, active_obj, objects, modifier=""):
-        if "," in modifier:
-            modifiers = [m.strip() for m in modifier.split(",")]
+        if "\n" in modifier:
+            modifiers = [m.strip() for m in modifier.split("\n")]
         else:
             modifiers = [modifier.strip()]
         
@@ -176,38 +176,38 @@ class Pick_Modifiers(Pick_Base):
         BatchModifiers.paste(context.selected_objects)
 
 @addon.Operator(idname="object.batch_modifier_copy")
-def Batch_Copy_Modifiers(self, context):
+def Batch_Copy_Modifiers(self, context, event):
     """Copy modifier(s) from the selected objects"""
     if not context.object: return
     BatchModifiers.copy(context.object)
     self.report({'INFO'}, "Modifiers copied")
 
 @addon.Operator(idname="object.batch_modifier_paste", options={'REGISTER', 'UNDO'})
-def Batch_Paste_Modifiers(self, context):
+def Batch_Paste_Modifiers(self, context, event):
     """Paste modifier(s) to the selected objects"""
     bpy.ops.ed.undo_push(message="Batch Paste Modifiers")
     BatchModifiers.paste(context.selected_objects)
 
 @addon.Operator(idname="object.batch_modifier_add", options={'REGISTER', 'UNDO'})
-def Batch_Add_Modifiers(self, context, modifier=""):
+def Batch_Add_Modifiers(self, context, event, modifier=""):
     """Add modifier(s) to the selected objects"""
     bpy.ops.ed.undo_push(message="Batch Add Modifiers")
     BatchModifiers.add(context.selected_objects, modifier)
 
 @addon.Operator(idname="object.batch_modifier_ensure", options={'REGISTER', 'UNDO'})
-def Batch_Ensure_Modifiers(self, context, modifier=""):
+def Batch_Ensure_Modifiers(self, context, event, modifier=""):
     """Ensure modifier(s) for the selected objects"""
     bpy.ops.ed.undo_push(message="Batch Ensure Modifiers")
     BatchModifiers.ensure(context.object, context.selected_objects, modifier)
 
 @addon.Operator(idname="object.batch_modifier_apply", options={'REGISTER', 'UNDO'})
-def Batch_Apply_Modifiers(self, context, modifier=""):
+def Batch_Apply_Modifiers(self, context, event, modifier=""):
     """Apply modifier(s) and remove from the stack(s)"""
     bpy.ops.ed.undo_push(message="Batch Apply Modifiers")
     BatchModifiers.apply(context.selected_objects, context.scene, modifier)
 
 @addon.Operator(idname="object.batch_modifier_remove", options={'REGISTER', 'UNDO'})
-def Batch_Remove_Modifiers(self, context, modifier=""):
+def Batch_Remove_Modifiers(self, context, event, modifier=""):
     """Remove modifier(s) from the selected objects"""
     bpy.ops.ed.undo_push(message="Batch Remove Modifiers")
     BatchModifiers.remove(context.selected_objects, modifier)
@@ -259,8 +259,6 @@ class ModifiersPG:
     
     remaining_items = []
     
-    clipbuffer = None
-    
     def refresh(self, context, force=False):
         batch_autorefresh = addon.preferences.autorefresh
         
@@ -279,12 +277,13 @@ class ModifiersPG:
             self.extract_info(infos, None, "", "", "")
         
         sorted_keys = sorted(infos.keys())
-        self.all_idnames = ",".join(sorted_keys)
+        self.all_idnames = "\n".join(sorted_keys)
         
         current_keys = set(infos.keys())
         ModifiersPG.remaining_items = [enum_item
             for enum_item in ModifiersPG.all_types_enum
             if enum_item[0] not in current_keys]
+        ModifiersPG.remaining_items.sort(key=lambda item:item[1])
         
         self.items.clear()
         for key in sorted_keys:
