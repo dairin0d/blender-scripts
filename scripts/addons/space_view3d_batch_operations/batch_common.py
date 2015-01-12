@@ -41,8 +41,16 @@ from {0}dairin0d.utils_addon import AddonManager
 
 addon = AddonManager()
 
+idnames_separator = "\t"
+
 def round_to_bool(v):
     return (v > 0.5) # bool(round(v))
+
+def has_common_layers(obj, scene):
+    return any(l0 and l1 for l0, l1 in zip(obj.layers, scene.layers))
+
+def is_visible(obj, scene):
+    return (not obj.hide) and has_common_layers(obj, scene)
 
 # adapted from the Copy Attributes Menu addon
 def copyattrs(src, dst, filter=""):

@@ -63,55 +63,55 @@ from . import batch_materials
 addon = AddonManager()
 
 """
-ROADMAP:
-* Generic summary calculator ("accumulator")
-* Generic Undo/Redo/change detection
-
 // Temporary note:
 if item is property group instance and item["pi"] = 3.14,
 in UI it should be displayed like this: layout.prop(item, '["pi"]')
 
+Make sure copy/pasting doesn't crash Blender after Undo (seems like it doesn't crash, but pasted references to objects are invalid)
+Make a general mechanism of serializing/deserializing links to ID blocks? (also useful for cut/copy/paste addon)
+
 // add to addon "runtime" settings to hold python objects? (just for the convenience of accessing them from one place)
 
-Make sure copy/pasting doesn't crash Blender after Undo (seems like it doesn't crash, but pasted references to objects are invalid)
-Make a general mechanism of serializing/deserializing links to ID blocks?
 
-Hmm, maybe monitor undo history / info-space reports, and consider new entries in them as a signal that something has changed?
-So, TODO: generic mechanism for detecting undos, redos(?) and modifications to the scene data (at least based on "officially" recorded logs)
+investigate if it's possible to make a shortcut to jump to certain tab in tool shelf
 
-investigate if it's possible to make a shortcut to jump to certain tab intool shelf
 
-moth3r suggests that Shift+clicking on item can "select" it (to avoid extra icon); as for how to display, maybe display name with some prefix or in brackets?
-moth3r would leave Ensure for now
-moth3r suggested copy/pasting objects (in particular, so that pasting an object won't create duplicate materials)
-copy/paste inside group? (in the selected batch groups)
-option to work with data's materials or object's materials (OBJECT by default)
+Should "copy/paste mode" and "show for" be independent for each Batch category?
+
+
 moth3r suggests to call "remove from .blend" as "purge"
+Purge with 0 users (+use_fake_users) is related only to the whole .blend data collection, so it's better fit to be a separate button or menu item
 
-simple click: remove from selection
-+ctrl: remove from .blend
-+shift on ALL: remove with 0 users and use_fake_users==False
-+shift+ctrl on ALL: remove with 0 users (even if use_fake_users==True)
-
-// Ensure seems like a redundant feature, as the same effect can be done by copy-pasting specific items from the list
-// Instead of checkbox for specifying which items should be affected by "All"-level operations, give ability to "deselect" entries by modifier-clicking on name, for example
-
-moth3r's ideas 2015-01-11:
-* parenting: a list of objects without parents?
-* option to flatten curves (convert to mesh) when applying modifiers -- this is a priority
-* material: apply() -> all objects in selection should become that material (or: shift+click?) -- this is a priority
-* group: apply() (same behaviour)
+Note: all this is possible only for operators, properties can't process events
+Also, only left click invokes the operator (right click invokes Blender's Manual/Source/Translation menu, and middle button drags the panels up/down)
+* NAME button
+    * Click: assign/ensure locally (in selection)
+    * Ctrl+Click: assign/ensure globally (in file)
+    * Alt+Click: apply / rename (for all objects in selection)
+    * Alt+Ctrl+Click: apply globally (for all objects in scene? in file?)
+    * Shift+Click: (de)select row (displayed as greyed-out)
+    * Shift+Ctrl+Click: select all objects with this modifier/material/goup/etc.
+* REMOVE button
+    * Click: remove locally (in selection)
+    * Ctrl+Click: remove globally (in file)
+    * Alt+Click: (only for All): purge
+    * Alt+Ctrl+Click: (only for All): purge even use_fake_users
 
 BUG: when removing modifiers, it doesn't work for curves
+* option to make single user (otherwise Blender won't allow to apply)
+* option to flatten curves (convert to mesh) when applying modifiers -- this is a priority
+* there is also "Modifier is disabled, skipping apply" when not all information is specified for the modifier (e.g. the object of shrink-wrapping)
 
-[23:59:43] Ivan Santic:
-Actually there is a nice addon http://blenderaddonlist.blogspot.com/2014/06/addon-parent-to-empty.html
-That could be shift+click or click operation for all selected objects depending on button.
+moth3r suggested copy/pasting objects (in particular, so that pasting an object won't create duplicate materials)
+copy/paste inside group? (in the selected batch groups)
 
-Ivan Santic:
-It would be great to auto select all objects which have particular modifier if I click on the modifer
-Not sure which button to use for that or maybe via shift+button for start or another modifier if that one is not free
-the same for materials etc.
+option to work with data's materials or object's materials (OBJECT by default)
+
+* single-click parenting: show a list of top-level objects? (i.e. without parents)
+    * Actually there is a nice addon http://blenderaddonlist.blogspot.com/2014/06/addon-parent-to-empty.html
+    * That could be shift+click or click operation for all selected objects depending on button.
+* material: apply() -> all objects in selection should become that material (or: shift+click?) -- this is a priority
+* group: apply() (same behaviour)
 
 Projected feature-set (vision):
 * [REMOVED] Refresh (Hopefully, we won't need refresh-by-time, since now we have refresh on actual change)
@@ -240,6 +240,7 @@ def on_change():
 class ChangeMonitoringOperator:
     is_running = False
     script_reload_kmis = []
+    last_reset_time = 0.0
     
     def invoke(self, context, event):
         ChangeMonitoringOperator.is_running = True
@@ -279,13 +280,28 @@ class ChangeMonitoringOperator:
         
         context_override = info_context or mouse_context
         
-        if event.type == 'MOUSEMOVE':
-            # The hope is that, if we call update only on mousemove events,
-            # crashes would happen with lesser pribability
-            if context_override and context_override.get("area"):
-                change_monitor.update(**context_override)
-                if change_monitor.something_changed:
-                    on_change()
+        if (event.type == 'MOUSEMOVE'):
+            if mouse_context:
+                x, y = event.mouse_x, event.mouse_y
+                r = mouse_context["region"]
+                dx = min((x - r.x), (r.x+r.width - x))
+                dy = min((y - r.y), (r.y+r.height - y))
+                if time.clock() > ChangeMonitoringOperator.last_reset_time:
+                    if (dx > 3) and (dy > 3): # not too close to region's border
+                        # The hope is that, if we call update only on mousemove events,
+                        # crashes would happen with lesser pribability
+                        if context_override and context_override.get("area"):
+                            change_monitor.update(**context_override)
+                            if change_monitor.something_changed:
+                                on_change()
+        elif 'MOUSEMOVE' in event.type:
+            pass
+        elif 'TIMER' in event.type:
+            pass
+        elif event.type == 'NONE':
+            pass
+        else:
+            ChangeMonitoringOperator.last_reset_time = time.clock() + 0.1
         
         return {'PASS_THROUGH'}
 
