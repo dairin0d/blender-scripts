@@ -67,6 +67,10 @@ ROADMAP:
 * Generic summary calculator ("accumulator")
 * Generic Undo/Redo/change detection
 
+// Temporary note:
+if item is property group instance and item["pi"] = 3.14,
+in UI it should be displayed like this: layout.prop(item, '["pi"]')
+
 // add to addon "runtime" settings to hold python objects? (just for the convenience of accessing them from one place)
 
 Make sure copy/pasting doesn't crash Blender after Undo (seems like it doesn't crash, but pasted references to objects are invalid)
@@ -79,7 +83,7 @@ investigate if it's possible to make a shortcut to jump to certain tab intool sh
 
 moth3r suggests that Shift+clicking on item can "select" it (to avoid extra icon); as for how to display, maybe display name with some prefix or in brackets?
 moth3r would leave Ensure for now
-moth3r suggested copy/pasting objects
+moth3r suggested copy/pasting objects (in particular, so that pasting an object won't create duplicate materials)
 copy/paste inside group? (in the selected batch groups)
 option to work with data's materials or object's materials (OBJECT by default)
 moth3r suggests to call "remove from .blend" as "purge"
@@ -99,6 +103,15 @@ moth3r's ideas 2015-01-11:
 * group: apply() (same behaviour)
 
 BUG: when removing modifiers, it doesn't work for curves
+
+[23:59:43] Ivan Santic:
+Actually there is a nice addon http://blenderaddonlist.blogspot.com/2014/06/addon-parent-to-empty.html
+That could be shift+click or click operation for all selected objects depending on button.
+
+Ivan Santic:
+It would be great to auto select all objects which have particular modifier if I click on the modifer
+Not sure which button to use for that or maybe via shift+button for start or another modifier if that one is not free
+the same for materials etc.
 
 Projected feature-set (vision):
 * [REMOVED] Refresh (Hopefully, we won't need refresh-by-time, since now we have refresh on actual change)
@@ -184,39 +197,6 @@ Projected feature-set (vision):
     ...
 """
 
-# ============================== AUTOREFRESH =============================== #
-#============================================================================#
-@addon.Operator(idname="object.batch_refresh")
-def batch_refresh(self, context):
-    """Force batch UI refresh"""
-    addon.external.modifiers.refresh(context, True)
-
-@addon.PropertyGroup
-class AutorefreshPG:
-    #autorefresh = True | prop("Enable auto-refresh")
-    autorefresh = False | prop("Enable auto-refresh")
-    refresh_interval = 0.5 | prop("Auto-refresh Interval", name="Refresh Interval", min=0.0)
-
-"""
-@LeftRightPanel
-class VIEW3D_PT_batch_autorefresh:
-    bl_category = "Batch"
-    bl_context = "objectmode"
-    bl_label = "Batch Refresh"
-    bl_space_type = 'VIEW_3D'
-    
-    def draw(self, context):
-        layout = NestedLayout(self.layout)
-        batch_autorefresh = addon.preferences.autorefresh
-        
-        with layout.row():
-            with layout.row(True):
-                layout.prop(batch_autorefresh, "autorefresh", text="", icon='PREVIEW_RANGE', toggle=True)
-                layout.row(True)(active=batch_autorefresh.autorefresh).prop(batch_autorefresh, "refresh_interval", text="Interval", icon='PREVIEW_RANGE')
-            layout.operator("object.batch_refresh", text="", icon='FILE_REFRESH')
-"""
-
-addon.Preferences.autorefresh = AutorefreshPG | prop()
 #============================================================================#
 
 @addon.Operator(idname="object.batch_properties_copy", space_type='PROPERTIES')
@@ -252,8 +232,8 @@ class ThisAddonPreferences:
 
 def on_change():
     context = bpy.context
-    addon.external.modifiers.refresh(context, force=True)
-    addon.external.materials.refresh(context, force=True)
+    addon.external.modifiers.refresh(context)
+    addon.external.materials.refresh(context)
     #print("Something changed!")
 
 @addon.Operator(idname="wm.batch_changes_monitor")
@@ -299,10 +279,13 @@ class ChangeMonitoringOperator:
         
         context_override = info_context or mouse_context
         
-        if context_override and context_override.get("area"):
-            change_monitor.update(**context_override)
-            if change_monitor.something_changed:
-                on_change()
+        if event.type == 'MOUSEMOVE':
+            # The hope is that, if we call update only on mousemove events,
+            # crashes would happen with lesser pribability
+            if context_override and context_override.get("area"):
+                change_monitor.update(**context_override)
+                if change_monitor.something_changed:
+                    on_change()
         
         return {'PASS_THROUGH'}
 

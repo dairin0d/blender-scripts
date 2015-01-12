@@ -41,6 +41,9 @@ from {0}dairin0d.utils_addon import AddonManager
 
 addon = AddonManager()
 
+def round_to_bool(v):
+    return (v > 0.5) # bool(round(v))
+
 # adapted from the Copy Attributes Menu addon
 def copyattrs(src, dst, filter=""):
     for attr in dir(src):

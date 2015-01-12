@@ -949,27 +949,36 @@ class ChangeMonitor:
         
         try:
             prev_clipboard = wm.clipboard
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as exc:
+            #print(exc)
             prev_clipboard = ""
+        
         prev_type = area.type
-        area.type = 'INFO'
+        if prev_type != 'INFO':
+            area.type = 'INFO'
         
-        bpy.ops.info.report_copy(kwargs)
-        if wm.clipboard: # something was selected
-            bpy.ops.info.select_all_toggle(kwargs) # something is selected: deselect all
-        bpy.ops.info.select_all_toggle(kwargs) # nothing is selected: select all
+        try:
+            bpy.ops.info.report_copy(kwargs)
+            if wm.clipboard: # something was selected
+                bpy.ops.info.select_all_toggle(kwargs) # something is selected: deselect all
+            bpy.ops.info.select_all_toggle(kwargs) # nothing is selected: select all
+            
+            bpy.ops.info.report_copy(kwargs)
+            reports = wm.clipboard.splitlines()
+            
+            bpy.ops.info.select_all_toggle(kwargs) # deselect everything
+            
+            if len(reports) >= self.reports_cleanup_trigger:
+                for i in range(self.reports_cleanup_count):
+                    bpy.ops.info.select_pick(kwargs, report_index=i)
+                bpy.ops.info.report_delete(kwargs)
+        except Exception as exc:
+            #print(exc)
+            reports = []
         
-        bpy.ops.info.report_copy(kwargs)
-        reports = wm.clipboard.splitlines()
+        if prev_type != 'INFO':
+            area.type = prev_type
         
-        bpy.ops.info.select_all_toggle(kwargs) # deselect everything
-        
-        if len(reports) >= self.reports_cleanup_trigger:
-            for i in range(self.reports_cleanup_count):
-                bpy.ops.info.select_pick(kwargs, report_index=i)
-            bpy.ops.info.report_delete(kwargs)
-        
-        area.type = prev_type
         wm.clipboard = prev_clipboard
         
         return reports
@@ -983,6 +992,11 @@ class ChangeMonitor:
         bool(self.operators_changed) or
         bool(self.reports_changed)
     )
+    
+    def hash(self, obj):
+        if obj is None: return 0
+        if hasattr(obj, "as_pointer"): return obj.as_pointer()
+        return hash(obj)
     
     def update(self, context=None, **kwargs):
         if not context: context = bpy.context
@@ -998,20 +1012,17 @@ class ChangeMonitor:
         
         active_obj = kwargs.get("object") or context.object
         scene = kwargs.get("scene") or context.scene
-        scene_hash = hash(scene)
-        undo_hash = hash(bpy.data.scenes)
-        operators_len = len(wm.operators)
-        reports = self.get_reports(context, **kwargs)
-        reports_len = len(reports)
         
         if (self.active_obj != active_obj):
             self.active_obj = active_obj
             self.active_obj_changed = True
         
+        scene_hash = self.hash(scene)
         if (self.scene_hash != scene_hash):
             self.scene_hash = scene_hash
             self.scene_changed = True
         
+        undo_hash = self.hash(bpy.data)
         if (self.undo_hash != undo_hash):
             self.undo_hash = undo_hash
             self.undo_performed = True
@@ -1023,14 +1034,17 @@ class ChangeMonitor:
             if data and (data.is_updated or data.is_updated_data):
                 self.object_updated = True
         
+        operators_len = len(wm.operators)
         if (operators_len != self.operators_len):
             self.operators_changed = operators_len - self.operators_len
             self.operators_len = operators_len
-        
-        if (reports_len != self.reports_len):
-            self.reports_changed = reports_len - self.reports_len
-            self.reports = reports
-            self.reports_len = reports_len
+        else: # maybe this would be a bit safer?
+            reports = self.get_reports(context, **kwargs) # sometimes this causes Blender to crash
+            reports_len = len(reports)
+            if (reports_len != self.reports_len):
+                self.reports_changed = reports_len - self.reports_len
+                self.reports = reports
+                self.reports_len = reports_len
         
         self.analyze_selection()
     
@@ -1065,7 +1079,7 @@ class ChangeMonitor:
             if self.selection_record_id == 0:
                 item = next(self.selection_walker, None)
                 history, active, total = item
-                item = tuple(hash(h) for h in history), hash(active), total
+                item = tuple(self.hash(h) for h in history), self.hash(active), total
                 self.selection_record_id = 1
                 if self.selection_recorder[0] != item:
                     #print("Active/history/total changed")
@@ -1076,7 +1090,7 @@ class ChangeMonitor:
             recorded_count = len(self.selection_recorder)
             for item in self.selection_walker:
                 if item[1]:
-                    item = hash(item[0]), item[1]
+                    item = self.hash(item[0]), item[1]
                     i = self.selection_record_id
                     if (i >= recorded_count) or (self.selection_recorder[i] != item):
                         #print("More than necessary or selection changed")
@@ -1099,13 +1113,13 @@ class ChangeMonitor:
             if self.selection_record_id == 0:
                 item = next(self.selection_walker, None)
                 history, active, total = item
-                item = tuple(hash(h) for h in history), hash(active), total
+                item = tuple(self.hash(h) for h in history), self.hash(active), total
                 self.selection_record_id = 1
                 self.selection_recorder.append(item) # first item is special
             
             for item in self.selection_walker:
                 if item[1]:
-                    item = hash(item[0]), item[1]
+                    item = self.hash(item[0]), item[1]
                     self.selection_recorder.append(item)
                 if time.clock() > time_stop: break
             else: # the iterator is exhausted

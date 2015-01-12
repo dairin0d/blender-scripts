@@ -802,7 +802,7 @@ PrimitiveItem = [
     ("Int", "Int", dict()),
     ("Float", "Float", dict()),
     ("String", "String", dict()),
-    ("Color", "FloatVector", dict(subtype='COLOR', size=3)),
+    ("Color", "FloatVector", dict(subtype='COLOR', size=3, min=0.0, max=1.0)),
     ("Euler", "FloatVector", dict(subtype='EULER', size=3)),
     ("Quaternion", "FloatVector", dict(subtype='QUATERNION', size=4)),
     ("Matrix3", "FloatVector", dict(subtype='MATRIX', size=9)),

@@ -35,15 +35,66 @@ from {0}dairin0d.utils_view3d import SmartView3D
 from {0}dairin0d.utils_userinput import KeyMapUtils
 from {0}dairin0d.utils_ui import NestedLayout
 from {0}dairin0d.bpy_inspect import prop, BlRna
+from {0}dairin0d.utils_accumulation import Aggregator, aggregated
 from {0}dairin0d.utils_addon import AddonManager
 """.format(dairin0d_location))
 
-from .batch_common import copyattrs, attrs_to_dict, dict_to_attrs, Pick_Base, LeftRightPanel
+from .batch_common import copyattrs, attrs_to_dict, dict_to_attrs, Pick_Base, LeftRightPanel, round_to_bool
 
 addon = AddonManager()
 
 # =============================== MODIFIERS ================================ #
 #============================================================================#
+modifier_icons = {
+    'MESH_CACHE':'MOD_MESHDEFORM',
+    'UV_PROJECT':'MOD_UVPROJECT',
+    'UV_WARP':'MOD_UVPROJECT',
+    'VERTEX_WEIGHT_EDIT':'MOD_VERTEX_WEIGHT',
+    'VERTEX_WEIGHT_MIX':'MOD_VERTEX_WEIGHT',
+    'VERTEX_WEIGHT_PROXIMITY':'MOD_VERTEX_WEIGHT',
+    'ARRAY':'MOD_ARRAY',
+    'BEVEL':'MOD_BEVEL',
+    'BOOLEAN':'MOD_BOOLEAN',
+    'BUILD':'MOD_BUILD',
+    'DECIMATE':'MOD_DECIM',
+    'EDGE_SPLIT':'MOD_EDGESPLIT',
+    'MASK':'MOD_MASK',
+    'MIRROR':'MOD_MIRROR',
+    'MULTIRES':'MOD_MULTIRES',
+    'REMESH':'MOD_REMESH',
+    'SCREW':'MOD_SCREW',
+    'SKIN':'MOD_SKIN',
+    'SOLIDIFY':'MOD_SOLIDIFY',
+    'SUBSURF':'MOD_SUBSURF',
+    'TRIANGULATE':'MOD_TRIANGULATE',
+    'WIREFRAME':'MOD_WIREFRAME',
+    'ARMATURE':'MOD_ARMATURE',
+    'CAST':'MOD_CAST',
+    'CURVE':'MOD_CURVE',
+    'DISPLACE':'MOD_DISPLACE',
+    'HOOK':'HOOK',
+    'LAPLACIANSMOOTH':'MOD_SMOOTH',
+    'LAPLACIANDEFORM':'MOD_MESHDEFORM',
+    'LATTICE':'MOD_LATTICE',
+    'MESH_DEFORM':'MOD_MESHDEFORM',
+    'SHRINKWRAP':'MOD_SHRINKWRAP',
+    'SIMPLE_DEFORM':'MOD_SIMPLEDEFORM',
+    'SMOOTH':'MOD_SMOOTH',
+    'WARP':'MOD_WARP',
+    'WAVE':'MOD_WAVE',
+    'CLOTH':'MOD_CLOTH',
+    'COLLISION':'MOD_PHYSICS',
+    'DYNAMIC_PAINT':'MOD_DYNAMICPAINT',
+    'EXPLODE':'MOD_EXPLODE',
+    'FLUID_SIMULATION':'MOD_FLUIDSIM',
+    'OCEAN':'MOD_OCEAN',
+    'PARTICLE_INSTANCE':'MOD_PARTICLES',
+    'PARTICLE_SYSTEM':'MOD_PARTICLES',
+    'SMOKE':'MOD_SMOKE',
+    'SOFT_BODY':'MOD_SOFT',
+    'SURFACE':'MODIFIER',
+}
+
 class BatchModifiers:
     clipbuffer = None
     
@@ -212,38 +263,87 @@ def Batch_Remove_Modifiers(self, context, event, modifier=""):
     bpy.ops.ed.undo_push(message="Batch Remove Modifiers")
     BatchModifiers.remove(context.selected_objects, modifier)
 
+class ModifierAggregateInfo:
+    def __init__(self, type, name, identifier):
+        self.type = type
+        self.name = name
+        self.identifier = identifier
+        self.count = 0
+        self.show_expanded = Aggregator('NUMBER', {"same", "mean"}, int)
+        self.show_render = Aggregator('NUMBER', {"same", "mean"}, int)
+        self.show_viewport = Aggregator('NUMBER', {"same", "mean"}, int)
+        self.show_in_editmode = Aggregator('NUMBER', {"same", "mean"}, int)
+        self.show_on_cage = Aggregator('NUMBER', {"same", "mean"}, int)
+    
+    def fill_item(self, item):
+        item.name = self.name.replace(" Modifier", "")
+        item.idname = self.type
+        item.count = self.count
+        self.fill_aggr(item, "show_expanded", "mean", round_to_bool)
+        self.fill_aggr(item, "show_render", "mean", round_to_bool)
+        self.fill_aggr(item, "show_viewport", "mean", round_to_bool)
+        self.fill_aggr(item, "show_in_editmode", "mean", round_to_bool)
+        self.fill_aggr(item, "show_on_cage", "mean", round_to_bool)
+        item.user_editable = True
+    
+    def fill_aggr(self, item, name, query, convert=None):
+        aggr = getattr(self, name)
+        value = getattr(aggr, query)
+        if convert is not None: value = convert(value)
+        setattr(item, name, value)
+        item[name+":same"] = aggr.same
+    
+    @classmethod
+    def collect_info(cls, modifiers):
+        infos = {}
+        for md in modifiers:
+            cls.extract_info(infos, md, "", "", "")
+            cls.extract_info(infos, md)
+        sorted_keys = sorted(infos.keys())
+        all_idnames = "\n".join(sorted_keys)
+        return infos, sorted_keys, all_idnames
+    
+    @classmethod
+    def extract_info(cls, infos, md, md_type=None, name=None, identifier=None):
+        if md_type is None: md_type = md.type
+        
+        info = infos.get(md_type)
+        
+        if info is None:
+            if name is None: name = md.bl_rna.name
+            if identifier is None: identifier = md.bl_rna.identifier
+            
+            info = cls(md_type, name, identifier)
+            infos[md_type] = info
+        
+        info.count += 1
+        info.show_expanded.add(md.show_expanded)
+        info.show_render.add(md.show_render)
+        info.show_viewport.add(md.show_viewport)
+        info.show_in_editmode.add(md.show_in_editmode)
+        info.show_on_cage.add(md.show_on_cage)
+
 @addon.PropertyGroup
 class ModifierPG:
     idname = "" | prop()
-    
     count = 0 | prop()
-    
-    initialized = False | prop()
+    excluded = False | prop()
+    user_editable = False | prop()
     
     def gen_show_update(name):
         def update(self, context):
-            if not self.initialized: return
+            if not self.user_editable: return
             message = self.bl_rna.properties[name].description
-            value = getattr(self, name)[0]
+            value = getattr(self, name)
             bpy.ops.ed.undo_push(message=message)
             BatchModifiers.set_attr(name, value, context.selected_objects, self.idname)
         return update
     
-    show_expanded = (True, True) | prop("Are modifier(s) expanded in the UI",
-        update=gen_show_update("show_expanded"))
-    show_render = (True, True) | prop("Use modifier(s) during render",
-        update=gen_show_update("show_render"))
-    show_viewport = (True, True) | prop("Display modifier(s) in viewport",
-        update=gen_show_update("show_viewport"))
-    show_in_editmode = (True, True) | prop("Display modifier(s) in edit mode",
-        update=gen_show_update("show_in_editmode"))
-    show_on_cage = (True, True) | prop("Adjust edit cage to modifier(s) result",
-        update=gen_show_update("show_on_cage"))
-    
-    def from_info_toggle(self, info, name):
-        ivalue = info[name]
-        value = ((ivalue[0] >= 0), ivalue[1])
-        setattr(self, name, value)
+    show_expanded = True | prop("Are modifier(s) expanded in the UI", update=gen_show_update("show_expanded"))
+    show_render = True | prop("Use modifier(s) during render", update=gen_show_update("show_render"))
+    show_viewport = True | prop("Display modifier(s) in viewport", update=gen_show_update("show_viewport"))
+    show_in_editmode = True | prop("Display modifier(s) in edit mode", update=gen_show_update("show_in_editmode"))
+    show_on_cage = True | prop("Adjust edit cage to modifier(s) result", update=gen_show_update("show_on_cage"))
 
 @addon.PropertyGroup
 class ModifiersPG:
@@ -253,31 +353,31 @@ class ModifiersPG:
     
     items = [ModifierPG] | prop()
     
-    clock = 0.0 | prop()
-    
     all_idnames = "" | prop()
     
     remaining_items = []
     
-    def refresh(self, context, force=False):
-        batch_autorefresh = addon.preferences.autorefresh
-        
-        if not force:
-            if (not batch_autorefresh.autorefresh) or (time.clock() < self.clock):
-                return # prevent refresh-each-frame situation
-        
-        self.clock = time.clock() + batch_autorefresh.refresh_interval
-        
-        infos = {}
-        for obj in context.selected_objects:
-            for md in obj.modifiers:
-                self.extract_info(infos, md, "", "", "")
-                self.extract_info(infos, md)
-        if not infos:
-            self.extract_info(infos, None, "", "", "")
-        
-        sorted_keys = sorted(infos.keys())
-        self.all_idnames = "\n".join(sorted_keys)
+    paste_mode = 'SET' | prop("Copy/Paste mode", items=[
+        ('SET', "Replace", "Replace", 'ROTACTIVE'),
+        ('OR', "Add", "Union", 'ROTATECOLLECTION'),
+        ('AND', "Filter", "Intersection", 'ROTATECENTER'),
+    ])
+    show_for = 'SELECTION' | prop("Show summary for", items=[
+        ('SELECTION', "Selection", "Selection", 'RESTRICT_SELECT_OFF'), # EDIT OBJECT_DATA UV_SYNC_SELECT
+        ('VISIBLE', "Visible", "Visible", 'RESTRICT_VIEW_OFF'),
+        ('LAYER', "Layer", "Layer", 'RENDERLAYERS'),
+        ('SCENE', "Scene", "Scene", 'SCENE_DATA'),
+        ('FILE', "File", "File", 'FILE_BLEND'),
+        #('DATA', "Data", "Data", 'BLENDER'),
+    ])
+    apply_options = {'CONVERT_TO_MESH', 'MAKE_SINGLE_USER'} | prop("Apply Modifier options", items=[
+        ('CONVERT_TO_MESH', "Convert to mesh", "Convert to mesh", 'OUTLINER_OB_MESH'),
+        ('MAKE_SINGLE_USER', "Make signle user", "Make signle user", 'UNLINKED'), # COPY_ID UNLINKED
+    ])
+    
+    def refresh(self, context):
+        infos, sorted_keys, self.all_idnames = ModifierAggregateInfo.collect_info(
+            md for obj in context.selected_objects for md in obj.modifiers)
         
         current_keys = set(infos.keys())
         ModifiersPG.remaining_items = [enum_item
@@ -287,113 +387,14 @@ class ModifiersPG:
         
         self.items.clear()
         for key in sorted_keys:
-            info = infos[key]
-            item = self.items.add()
-            item.name = info["name"].replace(" Modifier", "")
-            item.idname = info["type"]
-            item.count = info["count"]
-            item.from_info_toggle(info, "show_expanded")
-            item.from_info_toggle(info, "show_render")
-            item.from_info_toggle(info, "show_viewport")
-            item.from_info_toggle(info, "show_in_editmode")
-            item.from_info_toggle(info, "show_on_cage")
-            item.initialized = True
-    
-    def extract_info(self, infos, md, md_type=None, name=None, identifier=None):
-        if md_type is None:
-            md_type = md.type
-        
-        info = infos.get(md_type)
-        
-        if info is None:
-            if name is None:
-                name = md.bl_rna.name
-            
-            if identifier is None:
-                identifier = md.bl_rna.identifier
-            
-            info = dict(type=md_type, name=name, identifier=identifier, count=0)
-            infos[md_type] = info
-        
-        info["count"] = info["count"] + 1
-        
-        self.extract_info_toggle(info, md, "show_expanded")
-        self.extract_info_toggle(info, md, "show_render")
-        self.extract_info_toggle(info, md, "show_viewport")
-        self.extract_info_toggle(info, md, "show_in_editmode")
-        self.extract_info_toggle(info, md, "show_on_cage")
-    
-    def extract_info_toggle(self, info, md, name):
-        if md is None:
-            info[name] = [False, False]
-            return
-        
-        value = (1 if getattr(md, name) else -1)
-        ivalue = info.get(name)
-        if ivalue is None:
-            info[name] = [value, True]
-        else:
-            if (value * ivalue[0]) < 0:
-                ivalue[1] = False
-            ivalue[0] += value
-    
-    modifier_icons = {
-        'MESH_CACHE':'MOD_MESHDEFORM',
-        'UV_PROJECT':'MOD_UVPROJECT',
-        'UV_WARP':'MOD_UVPROJECT',
-        'VERTEX_WEIGHT_EDIT':'MOD_VERTEX_WEIGHT',
-        'VERTEX_WEIGHT_MIX':'MOD_VERTEX_WEIGHT',
-        'VERTEX_WEIGHT_PROXIMITY':'MOD_VERTEX_WEIGHT',
-        'ARRAY':'MOD_ARRAY',
-        'BEVEL':'MOD_BEVEL',
-        'BOOLEAN':'MOD_BOOLEAN',
-        'BUILD':'MOD_BUILD',
-        'DECIMATE':'MOD_DECIM',
-        'EDGE_SPLIT':'MOD_EDGESPLIT',
-        'MASK':'MOD_MASK',
-        'MIRROR':'MOD_MIRROR',
-        'MULTIRES':'MOD_MULTIRES',
-        'REMESH':'MOD_REMESH',
-        'SCREW':'MOD_SCREW',
-        'SKIN':'MOD_SKIN',
-        'SOLIDIFY':'MOD_SOLIDIFY',
-        'SUBSURF':'MOD_SUBSURF',
-        'TRIANGULATE':'MOD_TRIANGULATE',
-        'WIREFRAME':'MOD_WIREFRAME',
-        'ARMATURE':'MOD_ARMATURE',
-        'CAST':'MOD_CAST',
-        'CURVE':'MOD_CURVE',
-        'DISPLACE':'MOD_DISPLACE',
-        'HOOK':'HOOK',
-        'LAPLACIANSMOOTH':'MOD_SMOOTH',
-        'LAPLACIANDEFORM':'MOD_MESHDEFORM',
-        'LATTICE':'MOD_LATTICE',
-        'MESH_DEFORM':'MOD_MESHDEFORM',
-        'SHRINKWRAP':'MOD_SHRINKWRAP',
-        'SIMPLE_DEFORM':'MOD_SIMPLEDEFORM',
-        'SMOOTH':'MOD_SMOOTH',
-        'WARP':'MOD_WARP',
-        'WAVE':'MOD_WAVE',
-        'CLOTH':'MOD_CLOTH',
-        'COLLISION':'MOD_PHYSICS',
-        'DYNAMIC_PAINT':'MOD_DYNAMICPAINT',
-        'EXPLODE':'MOD_EXPLODE',
-        'FLUID_SIMULATION':'MOD_FLUIDSIM',
-        'OCEAN':'MOD_OCEAN',
-        'PARTICLE_INSTANCE':'MOD_PARTICLES',
-        'PARTICLE_SYSTEM':'MOD_PARTICLES',
-        'SMOKE':'MOD_SMOKE',
-        'SOFT_BODY':'MOD_SOFT',
-        'SURFACE':'MODIFIER',
-    }
+            infos[key].fill_item(self.items.add())
     
     def draw_toggle(self, layout, item, name, icon):
-        with layout.row(True)(alert=not getattr(item, name)[1]):
-            layout.prop(item, name, icon=icon, text="", index=0, toggle=True)
+        with layout.row(True)(alert=not item[name+":same"]):
+            layout.prop(item, name, icon=icon, text="", toggle=True)
     
     def draw(self, layout):
-        all_enabled = (len(self.items) > 1)
-        with layout.column(True)(enabled=all_enabled):
+        with layout.column(True):
             for item in self.items:
                 with layout.row(True):
                     #icon = ('TRIA_DOWN' if item.show_expanded[0] else 'TRIA_RIGHT')
@@ -403,17 +404,71 @@ class ModifiersPG:
                     self.draw_toggle(layout, item, "show_in_editmode", 'EDITMODE_HLT')
                     self.draw_toggle(layout, item, "show_on_cage", 'MESH_DATA')
                     
-                    icon = self.modifier_icons.get(item.idname, 'MODIFIER')
+                    icon = modifier_icons.get(item.idname, 'MODIFIER')
                     op = layout.operator("object.batch_modifier_ensure", text="", icon=icon)
                     op.modifier = item.idname or self.all_idnames
                     
-                    count = (item.count if all_enabled else 0)
-                    text = "{} ({})".format(item.name or "(All)", count)
+                    text = "{} ({})".format(item.name or "(All)", item.count)
                     op = layout.operator("object.batch_modifier_apply", text=text)
                     op.modifier = item.idname
                     
                     op = layout.operator("object.batch_modifier_remove", icon='X', text="")
                     op.modifier = item.idname
+
+@addon.Menu
+class VIEW3D_MT_batch_modifiers_options_paste_mode:
+    bl_label = "Copy/Paste mode"
+    bl_description = "Copy/Paste mode"
+    def draw(self, context):
+        layout = NestedLayout(self.layout)
+        batch_modifiers = addon.external.modifiers
+        layout.props_enum(batch_modifiers, "paste_mode")
+        #layout.prop(batch_modifiers, "paste_mode", expand=True)
+
+@addon.Menu
+class VIEW3D_MT_batch_modifiers_options_show_for:
+    bl_label = "Search in"
+    bl_description = "Search in"
+    def draw(self, context):
+        layout = NestedLayout(self.layout)
+        batch_modifiers = addon.external.modifiers
+        layout.props_enum(batch_modifiers, "show_for")
+        #layout.prop(batch_modifiers, "show_for", expand=True)
+
+@addon.Menu
+class VIEW3D_MT_batch_modifiers_options_apply_options:
+    bl_label = "Apply Modifier"
+    bl_description = "Apply Modifier options"
+    def draw(self, context):
+        layout = NestedLayout(self.layout)
+        batch_modifiers = addon.external.modifiers
+        layout.props_enum(batch_modifiers, "apply_options")
+        #layout.prop(batch_modifiers, "apply_options", expand=True)
+
+@addon.Menu
+class VIEW3D_MT_batch_modifiers_options:
+    bl_label = "Options"
+    bl_description = "Options"
+    
+    def draw(self, context):
+        layout = NestedLayout(self.layout)
+        batch_modifiers = addon.external.modifiers
+        
+        with layout.column():
+            #layout.prop_enum(batch_modifiers, "paste_mode")
+            #layout.prop_enum(batch_modifiers, "show_for")
+            #layout.props_enum(batch_modifiers, "paste_mode")
+            #layout.props_enum(batch_modifiers, "show_for")
+            #layout.prop_menu_enum(batch_modifiers, "paste_mode")
+            #layout.prop_menu_enum(batch_modifiers, "show_for")
+            #layout.prop(batch_modifiers, "paste_mode", text="", expand=True)
+            #layout.prop(batch_modifiers, "show_for", text="", expand=True)
+            layout.menu("VIEW3D_MT_batch_modifiers_options_paste_mode", icon='PASTEDOWN')
+            layout.menu("VIEW3D_MT_batch_modifiers_options_show_for", icon='VIEWZOOM')
+            layout.menu("VIEW3D_MT_batch_modifiers_options_apply_options", icon='MODIFIER')
+            # convert to mesh on apply OUTLINER_OB_MESH
+            # make data single-user before applying COPY_ID UNLINKED
+            # NLA_PUSHDOWN MODIFIER
 
 @LeftRightPanel
 class VIEW3D_PT_batch_modifiers:
@@ -425,13 +480,14 @@ class VIEW3D_PT_batch_modifiers:
     def draw(self, context):
         layout = NestedLayout(self.layout)
         batch_modifiers = addon.external.modifiers
-        batch_modifiers.refresh(context)
         
-        with layout.row(True):
-            layout.menu("OBJECT_MT_batch_modifier_add", icon='ZOOMIN', text="")
-            layout.operator("view3d.pick_modifiers", icon='EYEDROPPER', text="")
-            layout.operator("object.batch_modifier_copy", icon='COPYDOWN', text="")
-            layout.operator("object.batch_modifier_paste", icon='PASTEDOWN', text="")
+        with layout.row():
+            with layout.row(True):
+                layout.menu("OBJECT_MT_batch_modifier_add", icon='ZOOMIN', text="")
+                layout.operator("view3d.pick_modifiers", icon='EYEDROPPER', text="")
+                layout.operator("object.batch_modifier_copy", icon='COPYDOWN', text="")
+                layout.operator("object.batch_modifier_paste", icon='PASTEDOWN', text="")
+            layout.menu("VIEW3D_MT_batch_modifiers_options", icon='SCRIPTPLUGINS', text="")
         
         batch_modifiers.draw(layout)
 

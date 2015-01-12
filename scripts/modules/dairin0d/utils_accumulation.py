@@ -22,6 +22,7 @@ import math
 import bisect
 
 from .utils_text import indent, longest_common_substring
+from .bpy_inspect import prop
 
 #============================================================================#
 
@@ -186,11 +187,8 @@ class Aggregator:
     
     _compiled = {}
     
-    def __init__(self, type, queries=None):
+    def __init__(self, type, queries=None, convert=None):
         self._type = type
-        
-        localvars = dict(log=math.log, insort_left=bisect.insort_left,
-            startswith=self._startswith, endswith=self._endswith)
         
         if type == 'STRING':
             self._startswith = str.startswith
@@ -199,28 +197,38 @@ class Aggregator:
         
         if queries is None:
             queries = self._all_queries[type]
-        queries = set(queries) # make sure it's a copy
+        elif isinstance(queries, str):
+            queries = queries.split(" ")
         
-        # make sure requirements are included
-        if 'same' in queries: queries.add('prev')
-        if ('range' in queries) or ('center' in queries): queries.update(('min', 'max'))
-        if 'mean' in queries: queries.add('Ak')
-        if 'geometric_mean' in queries: queries.update(('sum_log', 'count'))
-        if 'harmonic_mean' in queries: queries.add('sum_rec')
-        if ('variance' in queries) or ('stddev' in queries): queries.update(('Qk', 'count'))
-        if 'Qk' in queries: queries.add('Ak')
-        if 'Ak' in queries: queries.add('count')
-        if 'median' in queries: queries.add('sorted')
-        if 'modes' in queries: queries.add('freq_max')
-        if 'freq_max' in queries: queries.add('freq_map')
-        if queries.intersection(('subseq', 'subseq_starts', 'subseq_ends')):
-            queries.update(('subseq', 'subseq_starts', 'subseq_ends'))
+        compiled_key0 = (type, frozenset(queries), convert)
+        compiled = Aggregator._compiled.get(compiled_key0)
         
-        compiled_key = (type, frozenset(queries))
-        compiled = Aggregator._compiled.get(compiled_key)
         if not compiled:
-            compiled = self._compile(type, queries, localvars)
-            Aggregator._compiled[compiled_key] = compiled
+            queries = set(queries) # make sure it's a copy
+            
+            # make sure requirements are included
+            if 'same' in queries: queries.add('prev')
+            if ('range' in queries) or ('center' in queries): queries.update(('min', 'max'))
+            if 'mean' in queries: queries.add('Ak')
+            if 'geometric_mean' in queries: queries.update(('sum_log', 'count'))
+            if 'harmonic_mean' in queries: queries.add('sum_rec')
+            if ('variance' in queries) or ('stddev' in queries): queries.update(('Qk', 'count'))
+            if 'Qk' in queries: queries.add('Ak')
+            if 'Ak' in queries: queries.add('count')
+            if 'median' in queries: queries.add('sorted')
+            if 'modes' in queries: queries.add('freq_max')
+            if 'freq_max' in queries: queries.add('freq_map')
+            if queries.intersection(('subseq', 'subseq_starts', 'subseq_ends')):
+                queries.update(('subseq', 'subseq_starts', 'subseq_ends'))
+            
+            compiled_key = (type, frozenset(queries), convert)
+            compiled = Aggregator._compiled.get(compiled_key)
+            
+            if not compiled:
+                compiled = self._compile(type, queries, convert)
+                Aggregator._compiled[compiled_key] = compiled
+            
+            Aggregator._compiled[compiled_key0] = compiled
         
         # Assign bound methods
         self.reset = compiled[0].__get__(self, self.__class__)
@@ -229,10 +237,13 @@ class Aggregator:
         
         self.reset()
     
-    def _compile(self, type, queries, localvars):
+    def _compile(self, type, queries, convert):
         reset_lines = []
         init_lines = []
         add_lines = []
+        
+        localvars = dict(log=math.log, insort_left=bisect.insort_left,
+            startswith=self._startswith, endswith=self._endswith, convert=convert)
         
         if 'count' in queries:
             reset_lines.append("self._count = None")
@@ -354,6 +365,7 @@ class Aggregator:
         exec(reset_code, localvars, localvars)
         reset = localvars["reset"]
         
+        if convert is not None: init_lines.insert(0, "value = convert(value)")
         init_lines.append("self.add = self._add")
         init_lines = [indent(line, "    ") for line in init_lines]
         init_lines.insert(0, "def _init(self, value):")
@@ -362,6 +374,7 @@ class Aggregator:
         exec(init_code, localvars, localvars)
         _init = localvars["_init"]
         
+        if convert is not None: init_lines.insert(0, "value = convert(value)")
         add_lines = [indent(line, "    ") for line in add_lines]
         add_lines.insert(0, "def _add(self, value):")
         add_code = "\n".join(add_lines)
@@ -403,6 +416,108 @@ class Aggregator:
         na = len(a); nb = len(b)
         if nb > na: return False
         return all(a[na-i] == b[nb-i] for i in range(1, nb+1))
+
+class VectorAggregator:
+    def __init__(self, size, type, queries=None, covert=None):
+        self.axes = tuple(Aggregator(type, queries, covert) for i in range(size))
+    
+    def reset(self):
+        for axis in self.axes: axis.reset()
+    
+    def __len__(self):
+        return len(self.axes)
+    
+    def add(self, value):
+        for axis, item in zip(self.axes, value): axis.add(item)
+    
+    type = property(lambda self: self.axes[0].type)
+    
+    count = property(lambda self: self.axes[0].count) # same for all
+    same = property(lambda self: tuple(axis.same for axis in self.axes))
+    
+    min = property(lambda self: tuple(axis.min for axis in self.axes))
+    max = property(lambda self: tuple(axis.max for axis in self.axes))
+    range = property(lambda self: tuple(axis.range for axis in self.axes))
+    center = property(lambda self: tuple(axis.center for axis in self.axes))
+    
+    sum = property(lambda self: tuple(axis.sum for axis in self.axes))
+    sum_log = property(lambda self: tuple(axis.sum_log for axis in self.axes))
+    sum_rec = property(lambda self: tuple(axis.sum_rec for axis in self.axes))
+    product = property(lambda self: tuple(axis.product for axis in self.axes))
+    
+    mean = property(lambda self: tuple(axis.mean for axis in self.axes))
+    geometric_mean = property(lambda self: tuple(axis.geometric_mean for axis in self.axes))
+    harmonic_mean = property(lambda self: tuple(axis.harmonic_mean for axis in self.axes))
+    variance = property(lambda self: tuple(axis.variance for axis in self.axes))
+    stddev = property(lambda self: tuple(axis.stddev for axis in self.axes))
+    
+    sorted = property(lambda self: tuple(axis.sorted for axis in self.axes))
+    median = property(lambda self: tuple(axis.median for axis in self.axes))
+    
+    freq_map = property(lambda self: tuple(axis.freq_map for axis in self.axes))
+    freq_max = property(lambda self: tuple(axis.freq_max for axis in self.axes))
+    modes = property(lambda self: tuple(axis.modes for axis in self.axes))
+    
+    union = property(lambda self: tuple(axis.union for axis in self.axes))
+    intersection = property(lambda self: tuple(axis.intersection for axis in self.axes))
+    difference = property(lambda self: tuple(axis.difference for axis in self.axes))
+    
+    subseq = property(lambda self: tuple(axis.subseq for axis in self.axes))
+    subseq_starts = property(lambda self: tuple(axis.subseq_starts for axis in self.axes))
+    subseq_ends = property(lambda self: tuple(axis.subseq_ends for axis in self.axes))
+
+class aggregated(prop):
+    def aggregate_make(self, value):
+        prop_decl = self.make(value)
+        
+        aggregation_type = 'NUMBER'
+        vector_size = 0
+        convert = None
+        
+        prop_info = BpyProp(prop_decl)
+        if prop_info.type in (bpy.props.BoolProperty, bpy.props.IntProperty, bpy.props.FloatProperty):
+            if prop_info.type is bpy.props.BoolProperty: convert = int
+        elif prop_info.type in (bpy.props.BoolVectorProperty, bpy.props.IntVectorProperty, bpy.props.FloatVectorProperty):
+            if prop_info.type is bpy.props.BoolVectorProperty: convert = int
+            vector_size = prop_info.get("size") or len(prop_info["default"])
+        elif prop_info.type is bpy.props.CollectionProperty:
+            aggregation_type = 'SEQUENCE'
+        elif prop_info.type is bpy.props.EnumProperty:
+            aggregation_type = 'ENUM'
+        elif prop_info.type is bpy.props.StringProperty:
+            aggregation_type = 'STRING'
+        elif prop_info.type is bpy.props.PointerProperty:
+            aggregation_type = 'OBJECT'
+        
+        default_queries = prop_info.get("queries")
+        
+        if vector_size == 0:
+            @staticmethod
+            def aggregator(queries=None):
+                if queries is None: queries = default_queries
+                return Aggregator(aggregation_type, queries, convert)
+        else:
+            @staticmethod
+            def aggregator(queries=None):
+                if queries is None: queries = default_queries
+                return VectorAggregator(vector_size, aggregation_type, queries, convert)
+        
+        #@addon.PropertyGroup
+        class AggregatePG:
+            value = prop_decl
+            same = True | prop()
+            aggregator = aggregator
+        AggregatePG.__name__ += ":AUTOREGISTER" # for AddonManager
+        
+        return AggregatePG | prop()
+    
+    __ror__ = aggregate_make
+    __rlshift__ = aggregate_make
+    __rrshift__ = aggregate_make
+
+
+
+
 
 
 # TODO: documentation

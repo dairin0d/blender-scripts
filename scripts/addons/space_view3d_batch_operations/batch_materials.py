@@ -319,23 +319,13 @@ class MaterialPG:
 class MaterialsPG:
     items = [MaterialPG] | prop()
     
-    clock = 0.0 | prop()
-    
     all_idnames = "" | prop()
     
     remaining_items = []
     
     add_material = "" | prop()
     
-    def refresh(self, context, force=False):
-        batch_autorefresh = addon.preferences.autorefresh
-        
-        if not force:
-            if (not batch_autorefresh.autorefresh) or (time.clock() < self.clock):
-                return # prevent refresh-each-frame situation
-        
-        self.clock = time.clock() + batch_autorefresh.refresh_interval
-        
+    def refresh(self, context):
         infos = {}
         for obj in context.selected_objects:
             for ms in obj.material_slots:
@@ -434,7 +424,6 @@ class VIEW3D_PT_batch_materials:
     def draw(self, context):
         layout = NestedLayout(self.layout)
         batch_materials = addon.external.materials
-        batch_materials.refresh(context)
         
         with layout.row(True):
             layout.menu("OBJECT_MT_batch_material_add", icon='ZOOMIN', text="")
