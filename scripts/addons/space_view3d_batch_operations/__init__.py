@@ -19,7 +19,7 @@ bl_info = {
     "name": "Batch Operations",
     "description": "Batch control of modifiers, etc.",
     "author": "dairin0d, moth3r",
-    "version": (0, 2, 0),
+    "version": (0, 2, 2),
     "blender": (2, 7, 0),
     "location": "View3D > Batch category in Tools panel",
     "warning": "",
@@ -76,7 +76,10 @@ Make a general mechanism of serializing/deserializing links to ID blocks? (also 
 investigate if it's possible to make a shortcut to jump to certain tab in tool shelf
 
 
-Should "copy/paste mode" and "show for" be independent for each Batch category?
+TODO: update each category on when it's actually visible? for operators, instead of 'REGISTER' option, set "dirty" flag?
+
+* Should Copy/Paste mode and Search In be independent for each Batch category?
+* I suppose Copy/Paste mode, Search In, Apply Modifier options should be stored in .blend?
 
 
 moth3r suggests to call "remove from .blend" as "purge"
@@ -231,9 +234,10 @@ class ThisAddonPreferences:
             layout.prop(self, "use_panel_right")
 
 def on_change():
-    context = bpy.context
-    addon.external.modifiers.refresh(context)
-    addon.external.materials.refresh(context)
+    addon.external.modifiers.needs_refresh = True
+    #context = bpy.context
+    #addon.external.modifiers.refresh(context)
+    #addon.external.materials.refresh(context)
     #print("Something changed!")
 
 @addon.Operator(idname="wm.batch_changes_monitor")
