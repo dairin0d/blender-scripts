@@ -51,10 +51,56 @@ addon = AddonManager()
 It's actually the data (mesh, curve, surface, metaball, text) that dictates the number of materials.
 The data has its own list of materials, but they can be overridden on object level
 by changing the corresponding slot's link type to 'OBJECT'.
+
+* options synchronization
+* in edit mode, 'SELECTION' mode should be interpreted as mesh/etc. selection?
+* [DONE] rename (for All: rename listed materials by some pattern, e.g. common name + id, or the corresponding data/object name)
+* [DONE] replace
+* merge identical?
+* make single-user copies? (this is probably useless)
+* Option "Affect data": can modify data materials or switch slot.link to OBJECT
+* Option "Reuse slots": when adding material, use unoccupied slots first, or always creating new ones
 """
 
-# TODO: in edit mode, 'SELECTION' mode should be interpreted as mesh/etc. selection?
-# TODO: rename, replace
+class PatternRenamer:
+    before = "\u0002"
+    after = "\u0003"
+    
+    @classmethod
+    def is_pattern(cls, value):
+        return (cls.before in value) or (cls.after in value)
+    
+    @classmethod
+    def make(cls, subseq, subseq_starts, subseq_ends):
+        pattern = subseq
+        if (not subseq_starts): pattern = cls.before + pattern
+        if (not subseq_ends) and subseq: pattern = pattern + cls.after
+        return pattern
+    
+    @classmethod
+    def apply(cls, value, src_pattern, pattern):
+        middle = src_pattern.lstrip(cls.before).rstrip(cls.after)
+        i_mid = value.index(middle)
+        
+        sL, sC, sR = "", value, ""
+        
+        if src_pattern.startswith(cls.before):
+            if middle:
+                sL = value[:i_mid]
+                sC = middle
+            else:
+                sL = middle
+        
+        if src_pattern.endswith(cls.after):
+            if middle:
+                sR = value[i_mid+len(middle):]
+                sC = middle
+        
+        return pattern.replace(cls.before, sL).replace(cls.after, sR)
+    
+    @classmethod
+    def apply_to_attr(cls, obj, attr_name, pattern, src_pattern):
+        setattr(obj, attr_name, cls.apply(getattr(obj, attr_name), src_pattern, pattern))
 
 #============================================================================#
 Category_Name = "Material"
@@ -154,22 +200,20 @@ class BatchOperations:
     
     @classmethod
     def split_idnames(cls, idnames):
+        if idnames is None: return None
         if not isinstance(idnames, str): return set(idnames)
         return {n.strip() for n in idnames.split(idnames_separator)}
     
     @classmethod
-    def set_attr(cls, name, value, objects, idnames):
+    def set_attr(cls, name, value, objects, idnames, **kwargs):
         idnames = cls.split_idnames(idnames)
-        if name != "use_fake_user":
-            for obj in objects:
-                for ms in obj.material_slots:
-                    if not ms.material: continue
-                    if ms.name in idnames:
-                        setattr(ms.material, name, value)
-        else:
+        
+        if name == "use_fake_user":
             mesh = None
+            
             for idname in idnames:
                 mat = cls.to_material(idname)
+                
                 if value:
                     # can't set use_fake_user if 0 users
                     if mat.users == 0:
@@ -180,9 +224,32 @@ class BatchOperations:
                     if mat.users == 1:
                         if mesh is None: mesh = bpy.data.meshes.new("TmpMesh")
                         mesh.materials.append(mat)
+                
                 mat.use_fake_user = value
+                
                 if mesh: mesh.materials.pop(0)
+            
             if mesh: bpy.data.meshes.remove(mesh)
+        else:
+            use_kwargs = False
+            
+            _setattr = setattr
+            if isinstance(value, str):
+                if PatternRenamer.is_pattern(value):
+                    _setattr = PatternRenamer.apply_to_attr
+                    use_kwargs = True
+            
+            if not use_kwargs: kwargs = {}
+            
+            for obj in objects:
+                if isinstance(obj, Material):
+                    if obj.name in idnames:
+                        _setattr(obj, name, value, **kwargs)
+                else:
+                    for ms in obj.material_slots:
+                        if not ms.material: continue
+                        if ms.name in idnames:
+                            _setattr(ms.material, name, value, **kwargs)
     
     
     @classmethod
@@ -206,21 +273,29 @@ class BatchOperations:
     
     @classmethod
     def remove(cls, objects, idnames, from_file=False):
-        idnames = cls.split_idnames(idnames)
+        cls.replace(objects, idnames, "", from_file)
+    
+    @classmethod
+    def replace(cls, objects, src_idnames, dst_idname, from_file=False):
+        idnames = cls.split_idnames(src_idnames)
+        dst_material = cls.to_material(dst_idname)
         if not from_file:
             for obj in objects:
-                cls.clear_obj_materials(obj, idnames)
+                for ms in obj.material_slots:
+                    if (idnames is None) or (ms.name in idnames):
+                        ms.link = 'OBJECT'
+                        ms.material = dst_material
         else:
             for obj in bpy.data.objects:
                 for ms in obj.material_slots:
                     if (idnames is None) or (ms.name in idnames):
-                        ms.material = None
+                        ms.material = dst_material
             for datas in (bpy.data.meshes, bpy.data.curves, bpy.data.metaballs):
                 for data in datas:
                     for i in range(len(data.materials)):
                         mat = data.materials[i]
-                        if mat and (mat.name in idnames):
-                            data.materials[i] = None
+                        if mat and ((idnames is None) or (mat.name in idnames)):
+                            data.materials[i] = dst_material
     
     @classmethod
     def select(cls, scene, idnames):
@@ -267,14 +342,18 @@ class BatchOperations:
 
 #============================================================================#
 @addon.Menu(idname="OBJECT_MT_batch_{}_add".format(category_name), description=
-"Add {}(s) to the selected objects".format(Category_Name))
+"Add {}(s)".format(Category_Name))
 def Menu_Add(self, context):
     layout = NestedLayout(self.layout)
+    op = layout.operator("object.batch_{}_add".format(category_name), text="<Create new>", icon='MATERIAL')
+    op.create = True
     for item in CategoryPG.remaining_items:
         idname = item[0]
         name = item[1]
-        icon_kw = BatchOperations.icon_kwargs(idname)
-        op = layout.operator("object.batch_{}_add".format(category_name), text=name, **icon_kw)
+        #icon_kw = BatchOperations.icon_kwargs(idname)
+        #op = layout.operator("object.batch_{}_add".format(category_name), text=name, **icon_kw)
+        # layout.operator() doesn't support icon_value argument
+        op = layout.operator("object.batch_{}_add".format(category_name), text=name, icon='MATERIAL')
         op.idnames = idname
 
 @addon.Operator(idname="view3d.pick_{}s".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
@@ -323,22 +402,73 @@ def Operator_Paste(self, context, event):
 
 @addon.Operator(idname="object.batch_{}_add".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
 "Click: Add")
-def Operator_Add(self, context, event, idnames=""):
+def Operator_Add(self, context, event, idnames="", create=False):
     category = get_category()
     options = get_options()
     bpy.ops.ed.undo_push(message="Batch Add {}s".format(Category_Name))
+    if create:
+        mat = bpy.data.materials.new("Material")
+        idnames = mat.name
     BatchOperations.add(options.iterate_objects(context), idnames)
     category.tag_refresh()
     return {'FINISHED'}
 
+@addon.Operator(idname="object.batch_{}_replace".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+"Click: Replace this {0} with another (+Ctrl: globally); Alt+Click: Replace {0}(s) with this one (+Ctrl: globally)".format(category_name))
+def Operator_Replace(self, context, event, idnames="", index=0):
+    category = get_category()
+    options = get_options()
+    if event.alt:
+        if index > 0: # not applicable to "All"
+            bpy.ops.ed.undo_push(message="Batch Replace {}s".format(Category_Name))
+            BatchOperations.replace(options.iterate_objects(context, event.ctrl), None, idnames, (options.search_in == 'FILE'))
+            category.tag_refresh()
+            return {'FINISHED'}
+    else:
+        globally = event.ctrl
+        def draw_popup_menu(self, context):
+            layout = NestedLayout(self.layout)
+            for item in BatchOperations.enum_all():
+                idname = item[0]
+                name = item[1]
+                op = layout.operator("object.batch_{}_replace_reverse".format(category_name), text=name, icon='MATERIAL')
+                op.src_idnames = idnames
+                op.dst_idname = idname
+                op.globally = globally
+        context.window_manager.popup_menu(draw_popup_menu, title="Replace with", icon='ARROW_LEFTRIGHT')
+
+@addon.Operator(idname="object.batch_{}_replace_reverse".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+"Click: Replace this {0} with another (+Ctrl: globally)".format(category_name))
+def Operator_Replace_Reverse(self, context, event, src_idnames="", dst_idname="", globally=False):
+    category = get_category()
+    options = get_options()
+    if event is not None: globally |= event.ctrl # ? maybe XOR?
+    bpy.ops.ed.undo_push(message="Batch Replace {}s".format(Category_Name))
+    BatchOperations.replace(options.iterate_objects(context, globally), src_idnames, dst_idname, (options.search_in == 'FILE'))
+    category.tag_refresh()
+    return {'FINISHED'}
+
 @addon.Operator(idname="object.batch_{}_assign".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
-"Click: Assign (+Ctrl: globally); Alt+Click: Rename (+Ctrl: globally); Shift+Click: (De)select row; Shift+Ctrl+Click: Select all objects with this item")
+"Click: Assign (+Ctrl: globally); Alt+Click: Rename; Shift+Click: (De)select row; Shift+Ctrl+Click: Select all objects with this item")
 def Operator_Assign(self, context, event, idnames="", index=0):
     category = get_category()
     options = get_options()
     if event.alt:
-        #bpy.ops.ed.undo_push(message="Rename {}".format(Category_Name))
-        pass # TODO
+        if CategoryPG.rename_id != index:
+            if index == 0: # All -> aggregate
+                if len(category.items) > 2:
+                    aggr = Aggregator('STRING', {'subseq', 'subseq_starts', 'subseq_ends'})
+                    for i in range(1, len(category.items)):
+                        aggr.add(category.items[i].idname)
+                    pattern = PatternRenamer.make(aggr.subseq, aggr.subseq_starts, aggr.subseq_ends)
+                else:
+                    pattern = category.items[1].idname
+            else:
+                pattern = category.items[index].idname
+            CategoryPG.rename_id = -1 # disable side-effects
+            CategoryPG.src_pattern = pattern
+            category.rename = pattern
+            CategoryPG.rename_id = index # side-effects are enabled now
     elif event.shift:
         if event.ctrl:
             bpy.ops.ed.undo_push(message="Batch Select {}s".format(Category_Name))
@@ -510,6 +640,20 @@ class CategoryPG:
     prev_idnames = set()
     excluded = set()
     
+    def update_rename(self, context):
+        if CategoryPG.rename_id < 0: return
+        category = get_category()
+        options = get_options()
+        bpy.ops.ed.undo_push(message="Rename {}".format(category_name))
+        idnames = category.items[CategoryPG.rename_id].idname or category.all_idnames
+        BatchOperations.set_attr("name", self.rename, options.iterate(context), idnames, src_pattern=CategoryPG.src_pattern)
+        CategoryPG.rename_id = -1 # Auto switch off
+        category.tag_refresh()
+    
+    rename_id = -1
+    src_pattern = ""
+    rename = "" | prop("Rename", "", update=update_rename)
+    
     was_drawn = False | prop()
     next_refresh_time = -1.0 | prop()
     
@@ -551,12 +695,15 @@ class CategoryPG:
         
         cls = self.__class__
         
+        processing_time = time.clock()
+        
         infos = AggregateInfo.collect_info(options.iterate(context), (options.search_in == 'FILE'))
         
         curr_idnames = set(infos.keys())
         if curr_idnames != cls.prev_idnames:
             # remember excluded state while idnames are the same
             cls.excluded.clear()
+            CategoryPG.rename_id = -1
         cls.prev_idnames = curr_idnames
         
         cls.remaining_items = [enum_item
@@ -569,6 +716,10 @@ class CategoryPG:
             item = self.items.add()
             item.sort_id = i
             infos[key].fill_item(item)
+        
+        processing_time = time.clock() - processing_time
+        # Disable autorefresh if it takes too much time
+        if processing_time > 0.05: options.autorefresh = False
         
         self.needs_refresh = False
     
@@ -591,11 +742,18 @@ class CategoryPG:
                     for name, icons in item.names_icons:
                         self.draw_toggle(layout, item, name, icons)
                     
-                    #icon_kw = BatchOperations.icon_kwargs(idname)
-                    text = "{} ({})".format(item.name or "(All)", item.count)
-                    op = layout.operator("object.batch_{}_assign".format(category_name), text=text)
+                    op = layout.operator("object.batch_{}_replace".format(category_name), text="", icon='ARROW_LEFTRIGHT')
                     op.idnames = item.idname or all_idnames
                     op.index = item.sort_id
+                    
+                    if CategoryPG.rename_id == item.sort_id:
+                        layout.prop(self, "rename", text="")
+                    else:
+                        #icon_kw = BatchOperations.icon_kwargs(idname)
+                        text = "{} ({})".format(item.name or "(All)", item.count)
+                        op = layout.operator("object.batch_{}_assign".format(category_name), text=text)
+                        op.idnames = item.idname or all_idnames
+                        op.index = item.sort_id
                     
                     op = layout.operator("object.batch_{}_remove".format(category_name), text="", icon='X')
                     op.idnames = item.idname or all_idnames

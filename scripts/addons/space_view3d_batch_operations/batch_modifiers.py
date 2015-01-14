@@ -237,7 +237,7 @@ class BatchOperations:
 
 #============================================================================#
 @addon.Menu(idname="OBJECT_MT_batch_{}_add".format(category_name), description=
-"Add {}(s) to the selected objects".format(Category_Name))
+"Add {}(s)".format(Category_Name))
 def Menu_Add(self, context):
     layout = NestedLayout(self.layout)
     for item in CategoryPG.remaining_items:
@@ -524,6 +524,8 @@ class CategoryPG:
         
         cls = self.__class__
         
+        processing_time = time.clock()
+        
         infos = AggregateInfo.collect_info(options.iterate(context))
         
         curr_idnames = set(infos.keys())
@@ -542,6 +544,10 @@ class CategoryPG:
             item = self.items.add()
             item.sort_id = i
             infos[key].fill_item(item)
+        
+        processing_time = time.clock() - processing_time
+        # Disable autorefresh if it takes too much time
+        if processing_time > 0.05: options.autorefresh = False
         
         self.needs_refresh = False
     

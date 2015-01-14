@@ -85,28 +85,8 @@ synchronized copy/paste? (e.g. copy/paste modifers and materials simultaneously)
 
 also: layers (see also: Layer Management addon by Bastien Montagne)
 
-moth3r suggests to call "remove from .blend" as "purge"
-Purge with 0 users (+use_fake_users) is related only to the whole .blend data collection, so it's better fit to be a separate button or menu item
-
-Note: all this is possible only for operators, properties can't process events
-Also, only left click invokes the operator (right click invokes Blender's Manual/Source/Translation menu, and middle button drags the panels up/down)
-* NAME button
-    * Click: assign/ensure locally (in selection)
-    * Ctrl+Click: assign/ensure globally (in file)
-    * Alt+Click: apply / rename (for all objects in selection)
-    * Alt+Ctrl+Click: apply globally (for all objects in scene? in file?)
-    * Shift+Click: (de)select row (displayed as greyed-out)
-    * Shift+Ctrl+Click: select all objects with this modifier/material/goup/etc.
-* REMOVE button
-    * Click: remove locally (in selection)
-    * Ctrl+Click: remove globally (in file)
-    * Alt+Click: (only for All): purge
-    * Alt+Ctrl+Click: (only for All): purge even use_fake_users
-
 moth3r suggested copy/pasting objects (in particular, so that pasting an object won't create duplicate materials)
 copy/paste inside group? (in the selected batch groups)
-
-? option to work with data's materials or object's materials (OBJECT by default) ?
 
 * single-click parenting: show a list of top-level objects? (i.e. without parents)
     * Actually there is a nice addon http://blenderaddonlist.blogspot.com/2014/06/addon-parent-to-empty.html
@@ -220,7 +200,7 @@ def Batch_Properties_Copy(self, context):
 
 @addon.Preferences.Include
 class ThisAddonPreferences:
-    refresh_interval = 0.5 | prop("Auto-refresh interval", name="Refresh interval")
+    refresh_interval = 0.5 | prop("Auto-refresh interval", name="Refresh interval", min=0.0)
     use_panel_left = True | prop("Show in T-panel", name="T (left panel)")
     use_panel_right = False | prop("Show in N-panel", name="N (right panel)")
     
