@@ -236,9 +236,9 @@ class BatchOperations:
                         obj.modifiers.remove(md)
 
 #============================================================================#
-@addon.Menu(idname="OBJECT_MT_batch_{}_add".format(category_name))
+@addon.Menu(idname="OBJECT_MT_batch_{}_add".format(category_name), description=
+"Add {}(s) to the selected objects".format(Category_Name))
 def Menu_Add(self, context):
-    """Add {}(s) to the selected objects""".format(Category_Name)
     layout = NestedLayout(self.layout)
     for item in CategoryPG.remaining_items:
         idname = item[0]
@@ -247,10 +247,9 @@ def Menu_Add(self, context):
         op = layout.operator("object.batch_{}_add".format(category_name), text=name, **icon_kw)
         op.idnames = idname
 
-@addon.Operator(idname="view3d.pick_{}s".format(category_name), options={'INTERNAL', 'REGISTER'})
+@addon.Operator(idname="view3d.pick_{}s".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+"Pick {}(s) from the object under mouse".format(Category_Name))
 class Operator_Pick(Pick_Base):
-    """Pick {}(s) from the object under mouse""".format(Category_Name)
-    
     @classmethod
     def poll(cls, context):
         return (context.mode == 'OBJECT')
@@ -261,55 +260,56 @@ class Operator_Pick(Pick_Base):
     
     def on_confirm(self, context, obj):
         category = get_category()
+        options = get_options()
         bpy.ops.ed.undo_push(message="Pick {}s".format(Category_Name))
         BatchOperations.copy(obj)
         self.report({'INFO'}, "{}s copied".format(Category_Name))
-        BatchOperations.paste(category.iterate_objects(context), category.paste_mode)
+        BatchOperations.paste(options.iterate_objects(context), options.paste_mode)
         category.tag_refresh()
 
 # NOTE: only when 'REGISTER' is in bl_options and {'FINISHED'} is returned,
 # the operator will be recorded in wm.operators and info reports
 
-@addon.Operator(idname="object.batch_{}_copy".format(category_name), options={'INTERNAL'})
+@addon.Operator(idname="object.batch_{}_copy".format(category_name), options={'INTERNAL'}, description=
+"Click: Copy")
 def Operator_Copy(self, context, event):
-    """Click: Copy"""
     if not context.object: return
     BatchOperations.copy(context.object, CategoryPG.excluded)
     self.report({'INFO'}, "{}s copied".format(Category_Name))
 
-@addon.Operator(idname="object.batch_{}_paste".format(category_name), options={'INTERNAL', 'REGISTER'})
+@addon.Operator(idname="object.batch_{}_paste".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+"Click: Paste (+Ctrl: Replace; +Shift: Add; +Alt: Filter)")
 def Operator_Paste(self, context, event):
-    """Click: Paste (+Ctrl: Replace; +Shift: Add; +Alt: Filter)"""
     category = get_category()
+    options = get_options()
     bpy.ops.ed.undo_push(message="Batch Paste {}s".format(Category_Name))
-    paste_mode = category.paste_mode
+    paste_mode = options.paste_mode
     if event.shift: paste_mode = 'OR'
     elif event.ctrl: paste_mode = 'SET'
     elif event.alt: paste_mode = 'AND'
-    BatchOperations.paste(category.iterate_objects(context), paste_mode)
+    BatchOperations.paste(options.iterate_objects(context), paste_mode)
     category.tag_refresh()
     return {'FINISHED'}
 
-@addon.Operator(idname="object.batch_{}_add".format(category_name), options={'INTERNAL', 'REGISTER'})
+@addon.Operator(idname="object.batch_{}_add".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+"Click: Add")
 def Operator_Add(self, context, event, idnames=""):
-    """Click: Add"""
     category = get_category()
+    options = get_options()
     bpy.ops.ed.undo_push(message="Batch Add {}s".format(Category_Name))
-    BatchOperations.add(category.iterate_objects(context), idnames)
+    BatchOperations.add(options.iterate_objects(context), idnames)
     category.tag_refresh()
     return {'FINISHED'}
 
-@addon.Operator(idname="object.batch_{}_assign".format(category_name), options={'INTERNAL', 'REGISTER'})
+@addon.Operator(idname="object.batch_{}_assign".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+"Click: Assign (+Ctrl: globally); Alt+Click: Apply (+Ctrl: globally); Shift+Click: (De)select row; Shift+Ctrl+Click: Select all objects with this item")
 def Operator_Assign(self, context, event, idnames="", index=0):
-    """Click: Assign (+Ctrl: globally);
-    Alt+Click: Apply (+Ctrl: globally);
-    Shift+Click: (De)select row;
-    Shift+Ctrl+Click: Select all objects with this item"""
     category = get_category()
+    options = get_options()
     if event.alt:
         bpy.ops.ed.undo_push(message="Batch Apply {}s".format(Category_Name))
         options = category.apply_options
-        BatchOperations.apply(category.iterate_objects(context, event.ctrl), context.scene, idnames, options)
+        BatchOperations.apply(options.iterate_objects(context, event.ctrl), context.scene, idnames, options)
     elif event.shift:
         if event.ctrl:
             bpy.ops.ed.undo_push(message="Batch Select {}s".format(Category_Name))
@@ -319,21 +319,21 @@ def Operator_Assign(self, context, event, idnames="", index=0):
             CategoryPG.toggle_excluded(category.items[index].idname)
     else:
         bpy.ops.ed.undo_push(message="Batch Assign {}s".format(Category_Name))
-        BatchOperations.assign(context.object, category.iterate_objects(context, event.ctrl), idnames)
+        BatchOperations.assign(context.object, options.iterate_objects(context, event.ctrl), idnames)
     category.tag_refresh()
     return {'FINISHED'}
 
-@addon.Operator(idname="object.batch_{}_remove".format(category_name), options={'INTERNAL', 'REGISTER'})
+@addon.Operator(idname="object.batch_{}_remove".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+"Click: Remove (+Ctrl: globally); Alt+Click: Purge (+Ctrl: even those with use_fake_users)")
 def Operator_Remove(self, context, event, idnames=""):
-    """Click: Remove (+Ctrl: globally);
-    Alt+Click: Purge (+Ctrl: even those with use_fake_users)"""
     category = get_category()
+    options = get_options()
     if event.alt:
         bpy.ops.ed.undo_push(message="Purge {}s".format(Category_Name))
         BatchOperations.purge(event.ctrl)
     else:
         bpy.ops.ed.undo_push(message="Batch Remove {}s".format(Category_Name))
-        BatchOperations.remove(category.iterate_objects(context, event.ctrl), idnames)
+        BatchOperations.remove(options.iterate_objects(context, event.ctrl), idnames)
     category.tag_refresh()
     return {'FINISHED'}
 
@@ -346,11 +346,12 @@ def add_aggregate_attrs(AggregateInfo, CategoryItemPG, idname_attr, declarations
         def update(self, context):
             if not self.user_editable: return
             category = get_category()
+            options = get_options()
             message = self.bl_rna.properties[name].description
             value = getattr(self, name)
             bpy.ops.ed.undo_push(message=message)
             idnames = self.idname or category.all_idnames
-            BatchOperations.set_attr(name, value, category.iterate_objects(context), idnames)
+            BatchOperations.set_attr(name, value, options.iterate_objects(context), idnames)
             category.tag_refresh()
         return update
     
@@ -439,9 +440,51 @@ add_aggregate_attrs(AggregateInfo, CategoryItemPG, "type", [
 ])
 
 @addon.PropertyGroup
+class CategoryOptionsPG:
+    def update_synchronized(self, context):
+        pass
+    synchronized = False | prop("Synchronized", "Synchronized", update=update_synchronized)
+    
+    def update_autorefresh(self, context):
+        pass
+    autorefresh = True | prop("Auto-refresh", update=update_autorefresh)
+    
+    def update(self, context):
+        category = get_category()
+        category.tag_refresh()
+    
+    paste_mode = 'SET' | prop("Copy/Paste mode", update=update, items=[
+        ('SET', "Replace", "Replace objects' {}(s) with the copied ones".format(category_name), 'ROTACTIVE'),
+        ('OR', "Add", "Add copied {}(s) to objects".format(category_name), 'ROTATECOLLECTION'),
+        ('AND', "Filter", "Remove objects' {}(s) that are not among the copied".format(category_name), 'ROTATECENTER'),
+    ])
+    search_in = 'SELECTION' | prop("Show summary for", update=update, items=[
+        ('SELECTION', "Selection", "Display {}(s) of the selection".format(category_name), 'RESTRICT_SELECT_OFF'),
+        ('VISIBLE', "Visible", "Display {}(s) of the visible objects".format(category_name), 'RESTRICT_VIEW_OFF'),
+        ('LAYER', "Layer", "Display {}(s) of the objects in the visible layers".format(category_name), 'RENDERLAYERS'),
+        ('SCENE', "Scene", "Display {}(s) of the objects in the current scene".format(category_name), 'SCENE_DATA'),
+        ('FILE', "File", "Display all {}(s) in this file".format(category_name), 'FILE_BLEND'),
+    ])
+    apply_options = {'CONVERT_TO_MESH', 'MAKE_SINGLE_USER', 'REMOVE_DISABLED'} | prop("Apply Modifier options", update=update, items=[
+        ('CONVERT_TO_MESH', "Convert to mesh", "Convert to mesh", 'OUTLINER_OB_MESH'),
+        ('MAKE_SINGLE_USER', "Make single user", "Make single user", 'UNLINKED'),
+        ('REMOVE_DISABLED', "Remove disabled", "Remove disabled", 'GHOST_DISABLED'),
+    ])
+    
+    def iterate(self, context=None, globally=False):
+        search_in = ('FILE' if globally else self.search_in)
+        return BatchOperations.iterate(search_in, context)
+    def iterate_objects(self, context=None, globally=False):
+        search_in = ('FILE' if globally else self.search_in)
+        return BatchOperations.iterate_objects(search_in, context)
+
+@addon.PropertyGroup
 class CategoryPG:
     prev_idnames = set()
     excluded = set()
+    
+    was_drawn = False | prop()
+    next_refresh_time = -1.0 | prop()
     
     needs_refresh = True | prop()
     def tag_refresh(self):
@@ -455,24 +498,6 @@ class CategoryPG:
     items = [CategoryItemPG] | prop()
     
     remaining_items = []
-    
-    paste_mode = 'SET' | prop("Copy/Paste mode", items=[
-        ('SET', "Replace", "Replace", 'ROTACTIVE'),
-        ('OR', "Add", "Union", 'ROTATECOLLECTION'),
-        ('AND', "Filter", "Intersection", 'ROTATECENTER'),
-    ])
-    search_in = 'SELECTION' | prop("Show summary for", items=[
-        ('SELECTION', "Selection", "Selection", 'RESTRICT_SELECT_OFF'),
-        ('VISIBLE', "Visible", "Visible", 'RESTRICT_VIEW_OFF'),
-        ('LAYER', "Layer", "Layer", 'RENDERLAYERS'),
-        ('SCENE', "Scene", "Scene", 'SCENE_DATA'),
-        ('FILE', "File", "File", 'FILE_BLEND'),
-    ])
-    apply_options = {'CONVERT_TO_MESH', 'MAKE_SINGLE_USER', 'REMOVE_DISABLED'} | prop("Apply Modifier options", items=[
-        ('CONVERT_TO_MESH', "Convert to mesh", "Convert to mesh", 'OUTLINER_OB_MESH'),
-        ('MAKE_SINGLE_USER', "Make single user", "Make single user", 'UNLINKED'),
-        ('REMOVE_DISABLED', "Remove disabled", "Remove disabled", 'GHOST_DISABLED'),
-    ])
     
     @classmethod
     def is_excluded(cls, idname):
@@ -490,18 +515,16 @@ class CategoryPG:
         else:
             cls.excluded.add(idname)
     
-    def iterate(self, context=None, globally=False):
-        search_in = ('FILE' if globally else self.search_in)
-        return BatchOperations.iterate(search_in, context)
-    def iterate_objects(self, context=None, globally=False):
-        search_in = ('FILE' if globally else self.search_in)
-        return BatchOperations.iterate_objects(search_in, context)
-    
-    def refresh(self, context):
-        if not self.needs_refresh: return
+    def refresh(self, context, needs_refresh=False):
+        options = get_options()
+        needs_refresh |= self.needs_refresh
+        needs_refresh |= options.autorefresh and (time.clock() > self.next_refresh_time)
+        if not needs_refresh: return
+        self.next_refresh_time = time.clock() + addon.preferences.refresh_interval
+        
         cls = self.__class__
         
-        infos = AggregateInfo.collect_info(self.iterate(context))
+        infos = AggregateInfo.collect_info(options.iterate(context))
         
         curr_idnames = set(infos.keys())
         if curr_idnames != cls.prev_idnames:
@@ -528,7 +551,8 @@ class CategoryPG:
             layout.prop(item, name, icon=icon, text="", toggle=True)
     
     def draw(self, layout):
-        if self.needs_refresh: self.refresh(bpy.context)
+        self.was_drawn = True
+        self.refresh(bpy.context)
         
         if not self.items: return
         
@@ -553,36 +577,50 @@ class CategoryPG:
 def Menu_PasteMode(self, context):
     """Paste mode"""
     layout = NestedLayout(self.layout)
-    category = get_category()
-    layout.props_enum(category, "paste_mode")
+    options = get_options()
+    layout.props_enum(options, "paste_mode")
 
-@addon.Menu(idname="VIEW3D_MT_batch_{}s_options_search_in".format(category_name), label="Search in")
+@addon.Menu(idname="VIEW3D_MT_batch_{}s_options_search_in".format(category_name), label="Filter")
 def Menu_SearchIn(self, context):
-    """Search in"""
+    """Filter"""
     layout = NestedLayout(self.layout)
-    category = get_category()
-    layout.props_enum(category, "search_in")
+    options = get_options()
+    layout.props_enum(options, "search_in")
 
 @addon.Menu(idname="VIEW3D_MT_batch_{}s_options_apply_options".format(category_name), label="Apply Modifier")
 def Menu_ApplyModifierOptions(self, context):
     """Apply Modifier options"""
     layout = NestedLayout(self.layout)
-    category = get_category()
-    layout.props_enum(category, "apply_options")
+    options = get_options()
+    layout.props_enum(options, "apply_options")
 
 @addon.Menu(idname="VIEW3D_MT_batch_{}s_options".format(category_name), label="Options")
 def Menu_Options(self, context):
     """Options"""
     layout = NestedLayout(self.layout)
+    options = get_options()
     with layout.column():
+        layout.prop(options, "synchronized")
         layout.menu("VIEW3D_MT_batch_{}s_options_paste_mode".format(category_name), icon='PASTEDOWN')
         layout.menu("VIEW3D_MT_batch_{}s_options_search_in".format(category_name), icon='VIEWZOOM')
         layout.menu("VIEW3D_MT_batch_{}s_options_apply_options".format(category_name), icon='MODIFIER')
+
+@addon.Operator(idname="object.batch_{}_refresh".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+"Click: Force refresh; Ctrl+Click: Toggle auto-refresh")
+def Operator_Refresh(self, context, event):
+    category = get_category()
+    options = get_options()
+    if event.ctrl:
+        options.autorefresh = not options.autorefresh
+    else:
+        category.refresh(context, True)
+    return {'FINISHED'}
 
 @LeftRightPanel(idname="VIEW3D_PT_batch_{}s".format(category_name), context="objectmode", space_type='VIEW_3D', category="Batch", label="Batch {}s".format(Category_Name))
 def Panel_Category(self, context):
     layout = NestedLayout(self.layout)
     category = get_category()
+    options = get_options()
     
     with layout.row():
         with layout.row(True):
@@ -590,9 +628,21 @@ def Panel_Category(self, context):
             layout.operator("view3d.pick_{}s".format(category_name), icon='EYEDROPPER', text="")
             layout.operator("object.batch_{}_copy".format(category_name), icon='COPYDOWN', text="")
             layout.operator("object.batch_{}_paste".format(category_name), icon='PASTEDOWN', text="")
-        layout.menu("VIEW3D_MT_batch_{}s_options".format(category_name), icon='SCRIPTPLUGINS', text="")
+        
+        icon = ('PREVIEW_RANGE' if options.autorefresh else 'FILE_REFRESH')
+        layout.operator("object.batch_{}_refresh".format(category_name), icon=icon, text="")
+        
+        #icon = ('SCRIPTWIN' if options.synchronized else 'SCRIPTPLUGINS')
+        icon = ('SCRIPTPLUGINS' if options.synchronized else 'SCRIPTWIN')
+        #icon = ('SOLO_ON' if options.synchronized else 'SOLO_OFF')
+        #icon = ('LOCKVIEW_ON' if options.synchronized else 'LOCKVIEW_OFF')
+        #icon = ('COLOR_GREEN' if options.synchronized else 'COLOR_BLUE')
+        layout.menu("VIEW3D_MT_batch_{}s_options".format(category_name), icon=icon, text="")
     
     category.draw(layout)
 
 addon.External.modifiers = CategoryPG | -prop()
 get_category = (lambda: addon.external.modifiers)
+
+addon.Preferences.modifiers = CategoryOptionsPG | prop()
+get_options = (lambda: addon.preferences.modifiers)

@@ -19,7 +19,7 @@ bl_info = {
     "name": "Batch Operations",
     "description": "Batch control of modifiers, etc.",
     "author": "dairin0d, moth3r",
-    "version": (0, 2, 2),
+    "version": (0, 2, 5),
     "blender": (2, 7, 0),
     "location": "View3D > Batch category in Tools panel",
     "warning": "",
@@ -67,7 +67,10 @@ addon = AddonManager()
 if item is property group instance and item["pi"] = 3.14,
 in UI it should be displayed like this: layout.prop(item, '["pi"]')
 
+TODO: make it possible to use separately different change-detecting mechanisms
+
 Make sure copy/pasting doesn't crash Blender after Undo (seems like it doesn't crash, but pasted references to objects are invalid)
+(TODO: clear clipbuffers on undo detection)
 Make a general mechanism of serializing/deserializing links to ID blocks? (also useful for cut/copy/paste addon)
 
 // add to addon "runtime" settings to hold python objects? (just for the convenience of accessing them from one place)
@@ -76,11 +79,11 @@ Make a general mechanism of serializing/deserializing links to ID blocks? (also 
 investigate if it's possible to make a shortcut to jump to certain tab in tool shelf
 
 
-TODO: update each category on when it's actually visible? for operators, instead of 'REGISTER' option, set "dirty" flag?
+syncronization of batch options (show different icon when synchronized)
 
-* Should Copy/Paste mode and Search In be independent for each Batch category?
-* I suppose Copy/Paste mode, Search In, Apply Modifier options should be stored in .blend?
+synchronized copy/paste? (e.g. copy/paste modifers and materials simultaneously)
 
+also: layers (see also: Layer Management addon by Bastien Montagne)
 
 moth3r suggests to call "remove from .blend" as "purge"
 Purge with 0 users (+use_fake_users) is related only to the whole .blend data collection, so it's better fit to be a separate button or menu item
@@ -100,15 +103,10 @@ Also, only left click invokes the operator (right click invokes Blender's Manual
     * Alt+Click: (only for All): purge
     * Alt+Ctrl+Click: (only for All): purge even use_fake_users
 
-BUG: when removing modifiers, it doesn't work for curves
-* option to make single user (otherwise Blender won't allow to apply)
-* option to flatten curves (convert to mesh) when applying modifiers -- this is a priority
-* there is also "Modifier is disabled, skipping apply" when not all information is specified for the modifier (e.g. the object of shrink-wrapping)
-
 moth3r suggested copy/pasting objects (in particular, so that pasting an object won't create duplicate materials)
 copy/paste inside group? (in the selected batch groups)
 
-option to work with data's materials or object's materials (OBJECT by default)
+? option to work with data's materials or object's materials (OBJECT by default) ?
 
 * single-click parenting: show a list of top-level objects? (i.e. without parents)
     * Actually there is a nice addon http://blenderaddonlist.blogspot.com/2014/06/addon-parent-to-empty.html
@@ -222,6 +220,7 @@ def Batch_Properties_Copy(self, context):
 
 @addon.Preferences.Include
 class ThisAddonPreferences:
+    refresh_interval = 0.5 | prop("Auto-refresh interval", name="Refresh interval")
     use_panel_left = True | prop("Show in T-panel", name="T (left panel)")
     use_panel_right = False | prop("Show in N-panel", name="N (right panel)")
     
@@ -229,16 +228,25 @@ class ThisAddonPreferences:
         layout = NestedLayout(self.layout)
         
         with layout.row():
-            layout.label("Show in:")
+            layout.prop(self, "refresh_interval")
+            #layout.label("Show in:")
             layout.prop(self, "use_panel_left")
             layout.prop(self, "use_panel_right")
 
+def something_was_drawn():
+    was_drawn = False
+    was_drawn |= addon.external.modifiers.was_drawn
+    was_drawn |= addon.external.materials.was_drawn
+    return was_drawn
+
 def on_change():
+    addon.external.modifiers.was_drawn = False
     addon.external.modifiers.needs_refresh = True
-    #context = bpy.context
-    #addon.external.modifiers.refresh(context)
-    #addon.external.materials.refresh(context)
-    #print("Something changed!")
+    addon.external.modifiers.refresh(bpy.context)
+    
+    addon.external.materials.was_drawn = False
+    addon.external.materials.needs_refresh = True
+    addon.external.materials.refresh(bpy.context)
 
 @addon.Operator(idname="wm.batch_changes_monitor")
 class ChangeMonitoringOperator:
@@ -290,7 +298,8 @@ class ChangeMonitoringOperator:
                 r = mouse_context["region"]
                 dx = min((x - r.x), (r.x+r.width - x))
                 dy = min((y - r.y), (r.y+r.height - y))
-                if time.clock() > ChangeMonitoringOperator.last_reset_time:
+                if time.clock() > ChangeMonitoringOperator.last_reset_time + 0.1:
+                #if something_was_drawn():
                     if (dx > 3) and (dy > 3): # not too close to region's border
                         # The hope is that, if we call update only on mousemove events,
                         # crashes would happen with lesser pribability
@@ -298,6 +307,8 @@ class ChangeMonitoringOperator:
                             change_monitor.update(**context_override)
                             if change_monitor.something_changed:
                                 on_change()
+                            #elif time.clock() > ChangeMonitoringOperator.last_reset_time + 1:
+                            #    on_change()
         elif 'MOUSEMOVE' in event.type:
             pass
         elif 'TIMER' in event.type:
@@ -305,7 +316,7 @@ class ChangeMonitoringOperator:
         elif event.type == 'NONE':
             pass
         else:
-            ChangeMonitoringOperator.last_reset_time = time.clock() + 0.1
+            ChangeMonitoringOperator.last_reset_time = time.clock()
         
         return {'PASS_THROUGH'}
 
@@ -319,17 +330,15 @@ class ChangeMonitoringOperator:
 # BUT: if we put bpy.app.handlers.persistent decorator, it will work.
 @bpy.app.handlers.persistent
 def scene_update_post(scene):
-    #print("scene_update_post() ChangeMonitoringOperator.is_running = %s" % ChangeMonitoringOperator.is_running)
     if not ChangeMonitoringOperator.is_running:
         ChangeMonitoringOperator.is_running = True
         bpy.ops.wm.batch_changes_monitor('INVOKE_DEFAULT')
 
 def register():
-    #print("register() ChangeMonitoringOperator.is_running = %s" % ChangeMonitoringOperator.is_running)
-    
-    #addon.handler_append("scene_update_pre", scene_update_post)
-    addon.handler_append("scene_update_post", scene_update_post)
-    #bpy.app.handlers.scene_update_post.append(scene_update_post)
+    # I couldn't find a way to avoid the unpredictable crashes,
+    # and some actions (like changing a material in material slot)
+    # cannot be detected through the info log anyway.
+    #addon.handler_append("scene_update_post", scene_update_post)
     
     addon.register()
     
@@ -340,8 +349,6 @@ def register():
         kmi = km.keymap_items.new("object.batch_properties_paste", 'V', 'PRESS', ctrl=True)
 
 def unregister():
-    #print("unregister() ChangeMonitoringOperator.is_running = %s" % ChangeMonitoringOperator.is_running)
-    
     KeyMapUtils.remove("object.batch_properties_copy")
     KeyMapUtils.remove("object.batch_properties_paste")
     
