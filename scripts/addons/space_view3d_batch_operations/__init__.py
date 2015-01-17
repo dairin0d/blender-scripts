@@ -19,7 +19,7 @@ bl_info = {
     "name": "Batch Operations",
     "description": "Batch control of modifiers, etc.",
     "author": "dairin0d, moth3r",
-    "version": (0, 3, 0),
+    "version": (0, 3, 5),
     "blender": (2, 7, 0),
     "location": "View3D > Batch category in Tools panel",
     "warning": "",
@@ -69,7 +69,7 @@ addon = AddonManager()
 if item is property group instance and item["pi"] = 3.14,
 in UI it should be displayed like this: layout.prop(item, '["pi"]')
 
-TODO: make it possible to use separately different change-detecting mechanisms
+TODO: make it possible to use separately different change-detecting mechanisms?
 
 Make sure copy/pasting doesn't crash Blender after Undo (seems like it doesn't crash, but pasted references to objects are invalid)
 (TODO: clear clipbuffers on undo detection)
@@ -81,8 +81,42 @@ Make a general mechanism of serializing/deserializing links to ID blocks? (also 
 investigate if it's possible to make a shortcut to jump to certain tab in tool shelf
 
 
-for copy/pasting (and other operations that work on active object),
-    take into account SpaceProperties.use_pin_id and SpaceProperties.pin_id?
+Some useful icons:
+create new ID block: NEW
+auto-update: TIME
+config/options/etc.: PREFERENCES, SAVE_PREFS
+extra options: QUESTION, INFO, COLLAPSEMENU, CHECKBOX_HLT, DOWNARROW_HLT, DOTSDOWN, LINK, INLINK
+apply/bake: REC, NLA_PUSHDOWN, FILE_TICK
+"affect what" filter: FILTER
+
+
+// seems like ANY menu/enum in panel header will have issues with background menus/enums (report a bug?)
+
+* [DONE] rename "assign" to "ensure" (the new "assign" would be what moth3r wanted: replace all + add if nothing to replace)
+
+* [DONE] in preferences: for each category, allow user to specify which flags should be "quick access" (others will be hidden in a menu)
+* [DONE] make Apply Modifier a separate button
+* [DONE] change control scheme for name button:
+    * Click: select the corresponding objects in the scene
+    * Shift+Click: (de)select the corresponding row
+    * Alt+Click: ensure/assign (ensure is less ambiguous than assign) (+Ctrl: globally)
+    * Ctrl+Click: rename
+
+(priority for moth3r):
+* [DONE] moth3r wants to have an option that replaces all with certain material and adds this material if there are no material slots; do it on shift+click on "replace" button
+* [DONE] add button for showing/hiding by group/material/modifier/etc., restrict/allow selection and rendering (also: move to layer?)
+* [DONE] parent to empty by material/group/etc. ? (Ivan needs this for his rendering program, since he has to go export-import FBX, so he can mass-assign materials in this program only by using parents)
+    * this seems like a too specific feature for me. Maybe he can just Ctrl+Shift+click on material/group/etc. and the invoke a separate operator that would parent the selected objects to an empty?
+    * moth3r argues that this is quite useful for many people. Flatten the hierarchy (no parents at all) (if some parents are empties, delete them), then parent all to a new empty at a center/average (empty's name = concatenation of idnames?)
+Hmm, maybe just add an "Extras" menu?
+
+* "Afftect" option? ("Same as Filter", "Selection", "Visible", etc.) [This would probably complicate things too much]
+
+for transforms: see Apply menu (rot/pos/scale, visual transform, make duplicates real?)
+See also: https://github.com/sebastian-k/scripts/blob/master/power_snapping_pies.py (what of this is applicable to batch operations?)
+
+
+for copy/pasting (and other operations that work on active object), take into account SpaceProperties.use_pin_id and SpaceProperties.pin_id?
 
 
 syncronization of batch options (show different icon when synchronized)
@@ -181,26 +215,25 @@ Projected feature-set (vision):
 * Constraints
     ...
 * Vertex Groups
+    * (moth3r asks) remove unused groups
     ...
 """
 
 #============================================================================#
 
-@addon.Operator(idname="object.batch_properties_copy", space_type='PROPERTIES')
+@addon.Operator(idname="object.batch_properties_copy", space_type='PROPERTIES', label="Batch Properties Copy")
 def Batch_Properties_Copy(self, context):
     properties_context = context.space_data.context
-    if properties_context == 'MODIFIER':
-        bpy.ops.object.batch_modifier_copy()
-    elif properties_context == 'MATERIAL':
-        bpy.ops.object.batch_material_copy()
+    Category = addon.preferences.copy_paste_contexts.get(properties_context)
+    if Category is None: return
+    getattr(bpy.ops.object, "batch_{}_copy".format(Category.category_name))()
 
-@addon.Operator(idname="object.batch_properties_paste", space_type='PROPERTIES')
+@addon.Operator(idname="object.batch_properties_paste", space_type='PROPERTIES', label="Batch Properties Paste")
 def Batch_Properties_Copy(self, context):
     properties_context = context.space_data.context
-    if properties_context == 'MODIFIER':
-        bpy.ops.object.batch_modifier_paste()
-    elif properties_context == 'MATERIAL':
-        bpy.ops.object.batch_material_paste()
+    Category = addon.preferences.copy_paste_contexts.get(properties_context)
+    if Category is None: return
+    getattr(bpy.ops.object, "batch_{}_paste".format(Category.category_name))()
 
 @addon.Preferences.Include
 class ThisAddonPreferences:
@@ -211,11 +244,22 @@ class ThisAddonPreferences:
     def draw(self, context):
         layout = NestedLayout(self.layout)
         
-        with layout.row():
+        with layout.row()(alignment='LEFT'):
             layout.prop(self, "refresh_interval")
             layout.prop(self, "use_panel_left")
             layout.prop(self, "use_panel_right")
+        
+        with layout.row()(alignment='LEFT'):
+            with layout.column():
+                for Category in self.categories:
+                    category = getattr(self, Category.category_name_plural)
+                    layout.label(text=Category.Category_Name_Plural+":", icon=Category.category_icon)
+            with layout.column():
+                for Category in self.categories:
+                    category = getattr(self, Category.category_name_plural)
+                    layout.prop_menu_enum(category, "quick_access", text="Quick access")
 
+'''
 def something_was_drawn():
     was_drawn = False
     was_drawn |= addon.external.modifiers.was_drawn
@@ -316,6 +360,7 @@ def scene_update_post(scene):
     if not ChangeMonitoringOperator.is_running:
         ChangeMonitoringOperator.is_running = True
         bpy.ops.wm.batch_changes_monitor('INVOKE_DEFAULT')
+'''
 
 def register():
     # I couldn't find a way to avoid the unpredictable crashes,
@@ -332,10 +377,13 @@ def register():
         kmi = km.keymap_items.new("object.batch_properties_paste", 'V', 'PRESS', ctrl=True)
 
 def unregister():
-    KeyMapUtils.remove("object.batch_properties_copy")
-    KeyMapUtils.remove("object.batch_properties_paste")
+    # Note: if we remove from non-addon keyconfigs, the keymap registration
+    # won't work on the consequent addon enable/reload (until Blender restarts)
+    kc = bpy.context.window_manager.keyconfigs.addon
+    KeyMapUtils.remove("object.batch_properties_copy", place=kc)
+    KeyMapUtils.remove("object.batch_properties_paste", place=kc)
     
     addon.unregister()
     
     # don't remove this, or on next addon enable the monitor will consider itself already running
-    ChangeMonitoringOperator.is_running = False
+    #ChangeMonitoringOperator.is_running = False
