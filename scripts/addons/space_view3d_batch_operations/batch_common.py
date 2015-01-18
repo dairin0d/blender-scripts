@@ -187,7 +187,7 @@ def LeftRightPanel(cls=None, **kwargs):
 
 change_monitor = ChangeMonitor(update=False)
 
-@addon.Operator(idname="object.batch_hide", options={'INTERNAL', 'REGISTER'}, label="Visibility", description="Restrict viewport visibility")
+@addon.Operator(idname="object.batch_hide", options={'INTERNAL', 'REGISTER'}, label="Visibile", description="Restrict viewport visibility")
 def Operator_Hide(self, context, event, idnames="", state=False):
     if event is not None:
         if event.shift: state = False # Shift -> force show
@@ -198,7 +198,7 @@ def Operator_Hide(self, context, event, idnames="", state=False):
         if obj.name in idnames: obj.hide = state
     return {'FINISHED'}
 
-@addon.Operator(idname="object.batch_hide_select", options={'INTERNAL', 'REGISTER'}, label="Selection", description="Restrict viewport selection")
+@addon.Operator(idname="object.batch_hide_select", options={'INTERNAL', 'REGISTER'}, label="Selectable", description="Restrict viewport selection")
 def Operator_Hide_Select(self, context, event, idnames="", state=False):
     if event is not None:
         if event.shift: state = False # Shift -> force show
@@ -209,7 +209,7 @@ def Operator_Hide_Select(self, context, event, idnames="", state=False):
         if obj.name in idnames: obj.hide_select = state
     return {'FINISHED'}
 
-@addon.Operator(idname="object.batch_hide_render", options={'INTERNAL', 'REGISTER'}, label="Rendering", description="Restrict rendering")
+@addon.Operator(idname="object.batch_hide_render", options={'INTERNAL', 'REGISTER'}, label="Renderable", description="Restrict rendering")
 def Operator_Hide_Render(self, context, event, idnames="", state=False):
     if event is not None:
         if event.shift: state = False # Shift -> force show
@@ -220,10 +220,10 @@ def Operator_Hide_Render(self, context, event, idnames="", state=False):
         if obj.name in idnames: obj.hide_render = state
     return {'FINISHED'}
 
-@addon.Operator(idname="object.batch_set_layers", options={'INTERNAL', 'REGISTER'}, label="Layers", description="Set layers")
+@addon.Operator(idname="object.batch_set_layers", options={'INTERNAL', 'REGISTER'}, label="Set layers", description="Set layers")
 class Operator_Set_Layers:
     idnames = "" | prop()
-    layers = (False,)*20 | prop("Layers", "Layers")
+    layers = (False,)*20 | prop("Set layers", "Set layers")
     layers_same = (False,)*20 | prop()
     
     def invoke(self, context, event):
@@ -234,7 +234,7 @@ class Operator_Set_Layers:
         self.layers = tuple(round_to_bool(state) for state in aggr.mean)
         self.layers_same = aggr.same
         wm = context.window_manager
-        return wm.invoke_props_dialog(self)
+        return wm.invoke_props_dialog(self, width=220)
     
     def execute(self, context):
         idnames = set(self.idnames.split(idnames_separator))
@@ -342,7 +342,7 @@ def make_category(globalvars, idname_attr="name", **kwargs):
             op = layout.operator("object.batch_{}_add".format(category_name), text=name, **icon_kw)
             op.idnames = idname
     
-    @addon.Operator(idname="view3d.pick_{}s".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+    @addon.Operator(idname="view3d.pick_{}".format(category_name_plural), options={'INTERNAL', 'REGISTER'}, description=
     "Pick {}(s) from the object under mouse".format(Category_Name))
     class Operator_Pick(Pick_Base):
         @classmethod
@@ -356,9 +356,9 @@ def make_category(globalvars, idname_attr="name", **kwargs):
         def on_confirm(self, context, obj):
             category = get_category()
             options = get_options()
-            bpy.ops.ed.undo_push(message="Pick {}s".format(Category_Name))
+            bpy.ops.ed.undo_push(message="Pick {}".format(Category_Name_Plural))
             BatchOperations.copy(obj)
-            self.report({'INFO'}, "{}s copied".format(Category_Name))
+            self.report({'INFO'}, "{} copied".format(Category_Name_Plural))
             BatchOperations.paste(options.iterate_objects(context), options.paste_mode)
             category.tag_refresh()
     
@@ -367,24 +367,42 @@ def make_category(globalvars, idname_attr="name", **kwargs):
     
     @addon.Operator(idname="object.batch_{}_copy".format(category_name), options={'INTERNAL'}, description=
     "Click: Copy")
-    def Operator_Copy(self, context, event):
-        if not context.object: return
-        BatchOperations.copy(context.object, CategoryPG.excluded)
-        self.report({'INFO'}, "{}s copied".format(Category_Name))
+    def Operator_Copy(self, context, event, object_name=""):
+        active_obj = (bpy.data.objects.get(object_name) if object_name else context.object)
+        if not active_obj: return
+        
+        category = get_category()
+        options = get_options()
+        
+        if not options.synchronized:
+            BatchOperations.copy(active_obj, CategoryPG.excluded)
+            self.report({'INFO'}, "{} copied".format(Category_Name_Plural))
+        else:
+            addon.preferences.sync_copy(active_obj)
+            self.report({'INFO'}, "{} copied".format(addon.preferences.sync_names()))
+        
+        #return {'FINISHED'}
     
     @addon.Operator(idname="object.batch_{}_paste".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
-    "Click: Paste (+Ctrl: Replace; +Shift: Add; +Alt: Filter)")
+    "Click: Paste (+Ctrl: Override, +Shift: Add, +Alt: Filter)")
     def Operator_Paste(self, context, event):
         category = get_category()
         options = get_options()
-        bpy.ops.ed.undo_push(message="Batch Paste {}s".format(Category_Name))
+        
         paste_mode = options.paste_mode
         if event is not None:
             if event.shift: paste_mode = 'OR'
             elif event.ctrl: paste_mode = 'SET'
             elif event.alt: paste_mode = 'AND'
-        BatchOperations.paste(options.iterate_objects(context), paste_mode)
-        category.tag_refresh()
+        
+        if not options.synchronized:
+            bpy.ops.ed.undo_push(message="Batch Paste {}".format(Category_Name_Plural))
+            BatchOperations.paste(options.iterate_objects(context), paste_mode)
+            category.tag_refresh()
+        else:
+            bpy.ops.ed.undo_push(message="Batch Paste {}".format(addon.preferences.sync_names()))
+            addon.preferences.sync_paste(context, paste_mode)
+        
         return {'FINISHED'}
     
     @addon.Operator(idname="object.batch_{}_add".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
@@ -392,115 +410,195 @@ def make_category(globalvars, idname_attr="name", **kwargs):
     def Operator_Add(self, context, event, idnames="", create=False):
         category = get_category()
         options = get_options()
-        bpy.ops.ed.undo_push(message="Batch Add {}s".format(Category_Name))
+        bpy.ops.ed.undo_push(message="Batch Add {}".format(Category_Name_Plural))
         if is_ID and create: idnames = BatchOperations.new(Category_Name)
         BatchOperations.add(options.iterate_objects(context), idnames)
         category.tag_refresh()
         return {'FINISHED'}
     
-    if is_ID:
-        @addon.Operator(idname="object.batch_{}_replace".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
-        "Click: Replace this {0} with another (+Ctrl: globally); Alt+Click: Replace {0}(s) with this one (+Ctrl: globally; +Shift: ensure)".format(category_name))
-        def Operator_Replace(self, context, event, idnames="", index=0, title=""):
-            category = get_category()
-            options = get_options()
-            if event.alt:
-                if index > 0: # not applicable to "All"
-                    globally = event.ctrl or (options.search_in == 'FILE')
-                    bpy.ops.ed.undo_push(message="Batch Replace {}s".format(Category_Name))
-                    BatchOperations.replace(options.iterate_objects(context, globally), None, idnames, globally, purge=globally)
-                    if event.shift: BatchOperations.ensure(context.object, options.iterate_objects(context, globally), idnames)
-                    category.tag_refresh()
-                    return {'FINISHED'}
-            else:
-                globally = event.ctrl
-                def draw_popup_menu(self, context):
-                    layout = NestedLayout(self.layout)
-                    for item in BatchOperations.enum_all():
-                        idname = item[0]
-                        name = item[1]
-                        op = layout.operator("object.batch_{}_replace_reverse".format(category_name), text=name, icon=category_icon)
-                        op.src_idnames = idnames
-                        op.dst_idname = idname
-                        op.globally = globally
-                context.window_manager.popup_menu(draw_popup_menu, title="Replace {} with".format(title), icon='ARROW_LEFTRIGHT')
-        
-        @addon.Operator(idname="object.batch_{}_replace_reverse".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
-        "Click: Replace this {0} with another (+Ctrl: globally)".format(category_name))
-        def Operator_Replace_Reverse(self, context, event, src_idnames="", dst_idname="", globally=False):
-            category = get_category()
-            options = get_options()
-            if event is not None: globally |= event.ctrl # ? maybe XOR?
-            globally |= (options.search_in == 'FILE')
-            bpy.ops.ed.undo_push(message="Batch Replace {}s".format(Category_Name))
-            BatchOperations.replace(options.iterate_objects(context, globally), src_idnames, dst_idname, globally, purge=globally)
-            category.tag_refresh()
-            return {'FINISHED'}
-    
-    @addon.Operator(idname="object.batch_{}_name".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
-    "Click: Select objects; Shift+Click: (De)select row; Ctrl+Click: Rename; Alt+Click: Ensure")
-    def Operator_Name(self, context, event, idnames="", index=0, title=""):
+    @addon.Operator(idname="object.batch_{}_assign".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+    "Click: Assign menu, Alt+Click: Alt-Assign action, Shift+Click: Shift-Assign action".format(category_name))
+    def Operator_Assign(self, context, event, idnames="", index=0, title=""):
         category = get_category()
         options = get_options()
-        if event.ctrl:
-            if CategoryPG.rename_id != index:
-                if index == 0: # All -> aggregate
-                    if len(category.items) > 2:
-                        aggr = Aggregator('STRING', {'subseq', 'subseq_starts', 'subseq_ends'})
-                        for i in range(1, len(category.items)):
-                            aggr.add(category.items[i].name)
-                        pattern = PatternRenamer.make(aggr.subseq, aggr.subseq_starts, aggr.subseq_ends)
-                    else:
-                        pattern = category.items[1].name
-                else:
-                    pattern = category.items[index].name
-                CategoryPG.rename_id = -1 # disable side-effects
-                CategoryPG.src_pattern = pattern
-                category.rename = pattern
-                CategoryPG.rename_id = index # side-effects are enabled now
-        elif event.alt:
-            bpy.ops.ed.undo_push(message="Batch Ensure {}s".format(Category_Name))
-            BatchOperations.ensure(context.object, options.iterate_objects(context, event.ctrl), idnames)
-        elif event.shift:
-            category = get_category()
-            CategoryPG.toggle_excluded(category.items[index].idname)
+        
+        if event.alt or event.shift:
+            operator_assign = getattr(bpy.ops.object, "batch_{}_assign_action".format(category_name))
+            operator_assign(src_idnames="", dst_idnames=idnames, globally=event.ctrl,
+                assign_mode=(options.action_assign_alt if event.alt else options.action_assign_shift))
         else:
-            bpy.ops.ed.undo_push(message="Batch Select {}s".format(Category_Name))
-            BatchOperations.select(context.scene, idnames)
+            globally = event.ctrl
+            
+            def draw_popup_menu(self, context):
+                layout = NestedLayout(self.layout)
+                
+                # maybe use operator_enum(operator, property) ?
+                for assign_item in BatchOperations.assign_modes:
+                    op = layout.operator("object.batch_{}_assign_action".format(category_name), text=assign_item[1], icon='SPACE2')
+                    op.src_idnames = ""
+                    op.dst_idnames = idnames
+                    op.globally = globally
+                    op.assign_mode = assign_item[0]
+                    op.all_if_empty = (assign_item[0] == 'REPLACE')
+                
+                layout.label("Replace {} with:".format(title))
+                for item in BatchOperations.enum_all():
+                    idname = item[0]
+                    name = item[1]
+                    op = layout.operator("object.batch_{}_assign_action".format(category_name), text=name, icon=category_icon)
+                    op.src_idnames = idnames
+                    op.dst_idnames = idname
+                    op.globally = globally
+                    op.assign_mode = 'REPLACE'
+                    op.all_if_empty = True
+            
+            context.window_manager.popup_menu(draw_popup_menu, title="{}: assign menu".format(title), icon=category_icon)
+    
+    @addon.Operator(idname="object.batch_{}_assign_action".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+    "Click: Perform the corresponding action (+Ctrl: globally)".format(category_name))
+    def Operator_Assign_Action(self, context, event, src_idnames="", dst_idnames="", globally=False, all_if_empty=True,
+                               assign_mode=('ADD' | prop(items=BatchOperations.assign_modes))):
+        category = get_category()
+        options = get_options()
+        
+        if event is not None: globally |= event.ctrl # ? maybe XOR?
+        globally |= options.is_globally
+        from_file = globally
+        purge = globally
+        
+        if not src_idnames:
+            src_idnames = (category.all_idnames if all_if_empty else None)
+        
+        active_obj = context.object
+        objects = options.iterate_objects(context, globally)
+        
+        mode_name = CategoryOptionsPG.assign_mode_names[assign_mode]
+        
+        bpy.ops.ed.undo_push(message="Batch {} {}".format(mode_name, Category_Name_Plural))
+        BatchOperations.assign(assign_mode, active_obj, objects, src_idnames, dst_idnames, from_file, purge)
+        
         category.tag_refresh()
         return {'FINISHED'}
     
+    @addon.Operator(idname="object.batch_{}_name".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
+    "Click: Select objects, Shift+Click: (De)select row (+Ctrl: set other rows), Ctrl+Click: Rename, Alt+Click: Assign action (+Ctrl: globally)")
+    def Operator_Name(self, context, event, idnames="", index=0, title=""):
+        category = get_category()
+        options = get_options()
+        preferences = addon.preferences
+        
+        if event.alt:
+            assign_mode = options.action_name_alt
+            all_if_empty = (assign_mode == 'REPLACE')
+            operator_assign = getattr(bpy.ops.object, "batch_{}_assign_action".format(category_name))
+            operator_assign(src_idnames="", dst_idnames=idnames, globally=event.ctrl, assign_mode=assign_mode, all_if_empty=all_if_empty)
+            return
+        elif event.shift:
+            category = get_category()
+            excluded_state = CategoryPG.is_excluded(category.items[index].idname)
+            toggled_state = not excluded_state
+            
+            if event.ctrl:
+                CategoryPG.set_excluded("", excluded_state)
+                CategoryPG.set_excluded(category.items[index].idname, toggled_state)
+            else:
+                CategoryPG.toggle_excluded(category.items[index].idname)
+            
+            if options.synchronize_selection:
+                included_idnames = CategoryPG.prev_idnames.difference(CategoryPG.excluded)
+                bpy.ops.ed.undo_push(message="Batch Select {}".format(Category_Name_Plural))
+                BatchOperations.select(context, included_idnames, 'OR')
+                # if deselected, make sure objects are deselected too
+                if toggled_state: BatchOperations.select(context, idnames, 'AND!')
+        elif event.ctrl:
+            if index == 0: # All -> aggregate
+                if len(category.items) > 2:
+                    aggr = Aggregator('STRING', {'subseq', 'subseq_starts', 'subseq_ends'})
+                    for i in range(1, len(category.items)):
+                        aggr.add(category.items[i].name)
+                    pattern = PatternRenamer.make(aggr.subseq, aggr.subseq_starts, aggr.subseq_ends)
+                else:
+                    pattern = category.items[1].name
+            else:
+                pattern = category.items[index].name
+            
+            if preferences.use_rename_popup:
+                # if everything is deselected, rename won't affect anything anyway
+                if not CategoryPG.is_excluded(""):
+                    operator_rename = getattr(bpy.ops.object, "batch_{}_rename".format(category_name))
+                    operator_rename('INVOKE_DEFAULT', idnames=idnames, rename=pattern)
+                CategoryPG.rename_id = -1
+            else:
+                if CategoryPG.rename_id != index:
+                    CategoryPG.rename_id = -1 # disable side-effects
+                    CategoryPG.src_pattern = pattern
+                    category.rename = pattern
+                    CategoryPG.rename_id = index # side-effects are enabled now
+        else:
+            bpy.ops.ed.undo_push(message="Batch Select {}".format(Category_Name_Plural))
+            BatchOperations.select(context, idnames)
+        
+        category.tag_refresh()
+        return {'FINISHED'}
+    
+    @addon.Operator(idname="object.batch_{}_rename".format(category_name), options={'INTERNAL', 'REGISTER'}, label="Batch rename", description="Batch rename")
+    class Operator_Rename:
+        idnames = "" | prop()
+        rename = "" | prop()
+        src_pattern = "" | prop()
+        
+        def invoke(self, context, event):
+            self.src_pattern = self.rename
+            wm = context.window_manager
+            return wm.invoke_props_dialog(self, width=220)
+        
+        def execute(self, context):
+            category = get_category()
+            options = get_options()
+            idnames = self.idnames or category.all_idnames
+            bpy.ops.ed.undo_push(message="Batch Rename {}".format(category_name))
+            BatchOperations.set_attr("name", self.rename, options.iterate(context, selected=(not is_ID)), idnames, src_pattern=self.src_pattern)
+            category.tag_refresh()
+            return {'FINISHED'}
+        
+        def draw(self, context):
+            layout = NestedLayout(self.layout)
+            layout.prop(self, "rename", text="")
+    
     @addon.Operator(idname="object.batch_{}_remove".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
-    "Click: Remove (+Ctrl: globally); Alt+Click: Purge")
+    "Click: Remove (+Ctrl: globally), Alt+Click: Purge")
     def Operator_Remove(self, context, event, idnames="", index=0, title=""):
         category = get_category()
         options = get_options()
         if event.alt:
-            bpy.ops.ed.undo_push(message="Purge {}s".format(Category_Name))
+            bpy.ops.ed.undo_push(message="Purge {}".format(Category_Name_Plural))
             BatchOperations.purge(True, idnames)
         else:
-            bpy.ops.ed.undo_push(message="Batch Remove {}s".format(Category_Name))
-            BatchOperations.remove(options.iterate_objects(context, event.ctrl), idnames, (options.search_in == 'FILE'))
+            bpy.ops.ed.undo_push(message="Batch Remove {}".format(Category_Name_Plural))
+            BatchOperations.remove(options.iterate_objects(context, event.ctrl), idnames, options.is_globally)
         category.tag_refresh()
         return {'FINISHED'}
     
     @addon.PropertyGroup
     class CategoryOptionsPG(options_mixin):
         def update_synchronized(self, context):
-            pass
-        synchronized = False | prop("Synchronized", "Synchronized", update=update_synchronized)
-        
-        def update_autorefresh(self, context):
-            pass
-        autorefresh = True | prop("Auto-refresh", update=update_autorefresh)
+            addon.preferences.sync_add(self, category_name_plural)
+        synchronized = False | prop("Synchronize options", "Synchronized", update=update_synchronized)
         
         def update(self, context):
+            addon.preferences.sync_update(self, category_name_plural)
             category = get_category()
             category.tag_refresh()
         
+        synchronize_selection = False | prop("Synchronize object/row selections", "Synchronize selection", update=update)
+        
+        prioritize_selection = True | prop("Affect all objects in the filter only if nothing is selected", "Prioritize selection", update=update)
+        
+        autorefresh = True | prop("Auto-refresh", update=update)
+        
         paste_mode_icons = {'SET':'ROTACTIVE', 'OR':'ROTATECOLLECTION', 'AND':'ROTATECENTER'}
         paste_mode = 'SET' | prop("Paste mode", update=update, items=[
-            ('SET', "Replace", "Replace objects' {}(s) with the copied ones".format(category_name), 'ROTACTIVE'),
+            ('SET', "Override", "Override objects' {}(s) with the copied ones".format(category_name), 'ROTACTIVE'),
             ('OR', "Add", "Add copied {}(s) to objects".format(category_name), 'ROTATECOLLECTION'),
             ('AND', "Filter", "Remove objects' {}(s) that are not among the copied".format(category_name), 'ROTATECENTER'),
         ])
@@ -515,11 +613,27 @@ def make_category(globalvars, idname_attr="name", **kwargs):
             ('FILE', "File", "Display all {}(s) in this file".format(category_name), 'FILE_BLEND'),
         ])
         
-        def iterate(self, context=None, globally=False):
-            search_in = ('FILE' if globally else self.search_in)
+        is_globally = property(lambda self: (not self.prioritize_selection) and (self.search_in == 'FILE'))
+        
+        # These are intentionally not synchronized, since user will likely want them to stay different for each category
+        assign_mode_names = {item[0]:item[1] for item in BatchOperations.assign_modes}
+        action_name_alt = BatchOperations.assign_mode_default | prop("Action for Alt+Click on the name button", items=BatchOperations.assign_modes)
+        action_assign_shift = BatchOperations.assign_mode_default1 | prop("Action for Shift+Click on the assign button", items=BatchOperations.assign_modes)
+        action_assign_alt = BatchOperations.assign_mode_default2 | prop("Action for Alt+Click on the assign button", items=BatchOperations.assign_modes)
+        
+        def iterate(self, context=None, globally=False, selected=None, search_in=None):
+            if search_in is None:
+                if not context: context = bpy.context
+                if selected is None: selected = self.prioritize_selection
+                search_in = ('SELECTION' if selected and context.selected_objects else self.search_in)
+                search_in = ('FILE' if globally else search_in)
             return BatchOperations.iterate(search_in, context)
-        def iterate_objects(self, context=None, globally=False):
-            search_in = ('FILE' if globally else self.search_in)
+        def iterate_objects(self, context=None, globally=False, selected=None, search_in=None):
+            if search_in is None:
+                if not context: context = bpy.context
+                if selected is None: selected = self.prioritize_selection
+                search_in = ('SELECTION' if selected and context.selected_objects else self.search_in)
+                search_in = ('FILE' if globally else search_in)
             return BatchOperations.iterate_objects(search_in, context)
     
     class AggregateInfo:
@@ -600,11 +714,10 @@ def make_category(globalvars, idname_attr="name", **kwargs):
         return update
     
     if is_ID:
-        aggregate_attrs.append(("use_fake_user", dict(tooltip="Keep this datablock even if it has no users")))
-        _nongeneric_actions.append(("aggregate_toggle", dict(property="use_fake_user", text="Extra fake user", icons=('PINNED', 'UNPINNED'))))
-        quick_access_default.add("use_fake_user")
-        _nongeneric_actions.append(("operator", dict(operator="object.batch_{}_replace".format(category_name), text="Replace", icon='ARROW_LEFTRIGHT')))
-        quick_access_default.add("object.batch_{}_replace".format(category_name))
+        aggregate_attrs.append(("use_fake_user", dict(tooltip="Keep this datablock even if it has no users (adds an extra fake user)")))
+        _nongeneric_actions.append(("aggregate_toggle", dict(property="use_fake_user", text="Keep datablock(s)", icons=('PINNED', 'UNPINNED'))))
+    _nongeneric_actions.append(("operator", dict(operator="object.batch_{}_assign".format(category_name), text="Assign Action", icon=category_icon)))
+    quick_access_default.add("object.batch_{}_assign".format(category_name))
     
     quick_access_items = []
     nongeneric_actions = []
@@ -647,15 +760,17 @@ def make_category(globalvars, idname_attr="name", **kwargs):
     
     CategoryOptionsPG.quick_access = quick_access_default | prop("Quick access", "Quick access", items=quick_access_items)
     
-    def aggregate_toggle(layout, item, property, icons, text=""):
+    def aggregate_toggle(layout, item, property, icons, text="", emboss=True):
         icon = (icons[0] if getattr(item, property) else icons[1])
         with layout.row(True)(alert=not item[property+":same"]):
-            layout.prop(item, property, icon=icon, text=text, toggle=True)
+            layout.prop(item, property, icon=icon, text=text, toggle=True, emboss=emboss)
     
     @addon.PropertyGroup
     class CategoryPG:
         prev_idnames = set()
         excluded = set()
+        idnames_in_selected = set()
+        is_anything_selected = False
         
         def update_rename(self, context):
             if CategoryPG.rename_id < 0: return
@@ -664,7 +779,7 @@ def make_category(globalvars, idname_attr="name", **kwargs):
             # The bad thing is, undo seems to not be pushed from an update callback
             bpy.ops.ed.undo_push(message="Rename {}".format(category_name))
             idnames = category.items[CategoryPG.rename_id].idname or category.all_idnames
-            BatchOperations.set_attr("name", self.rename, options.iterate(context), idnames, src_pattern=CategoryPG.src_pattern)
+            BatchOperations.set_attr("name", self.rename, options.iterate(context, selected=(not is_ID)), idnames, src_pattern=CategoryPG.src_pattern)
             CategoryPG.rename_id = -1 # Auto switch off
             category.tag_refresh()
         
@@ -690,39 +805,83 @@ def make_category(globalvars, idname_attr="name", **kwargs):
         
         @classmethod
         def is_excluded(cls, idname):
-            return idname in cls.excluded
+            if not idname:
+                return (cls.prev_idnames == cls.excluded)
+            else:
+                return idname in cls.excluded
+        
         @classmethod
         def set_excluded(cls, idname, value):
-            if value:
-                cls.excluded.add(idname)
+            if not idname:
+                category = get_category()
+                for i in range(1, len(category.items)):
+                    idname = category.items[i].idname
+                    if value:
+                        cls.excluded.add(idname)
+                    else:
+                        cls.excluded.discard(idname)
             else:
-                cls.excluded.discard(idname)
+                if value:
+                    cls.excluded.add(idname)
+                else:
+                    cls.excluded.discard(idname)
+        
         @classmethod
         def toggle_excluded(cls, idname):
-            if idname in cls.excluded:
-                cls.excluded.discard(idname)
+            if not idname:
+                category = get_category()
+                for i in range(1, len(category.items)):
+                    idname = category.items[i].idname
+                    if idname in cls.excluded:
+                        cls.excluded.discard(idname)
+                    else:
+                        cls.excluded.add(idname)
             else:
-                cls.excluded.add(idname)
+                if idname in cls.excluded:
+                    cls.excluded.discard(idname)
+                else:
+                    cls.excluded.add(idname)
+        
+        selection_info = (0, "")
+        default_select_state = None
         
         def refresh(self, context, needs_refresh=False):
+            cls = self.__class__
             options = get_options()
+            preferences = addon.preferences
+            
+            active_obj = context.scene.objects.active
+            selection_info = (len(context.selected_objects), (active_obj.name if active_obj else ""))
+            needs_refresh |= (selection_info != cls.selection_info)
+            
             needs_refresh |= self.needs_refresh
             needs_refresh |= options.autorefresh and (time.clock() > self.next_refresh_time)
             if not needs_refresh: return
-            self.next_refresh_time = time.clock() + addon.preferences.refresh_interval
-            
-            cls = self.__class__
+            self.next_refresh_time = time.clock() + preferences.refresh_interval
+            cls.selection_info = selection_info
             
             processing_time = time.clock()
             
-            infos = AggregateInfo.collect_info(options.iterate(context), is_ID and (options.search_in == 'FILE'))
+            infos = AggregateInfo.collect_info(options.iterate(context, selected=False), is_ID and (options.search_in == 'FILE'))
             
             curr_idnames = set(infos.keys())
-            if curr_idnames != cls.prev_idnames:
+            curr_idnames.discard("") # necessary for comparison with idnames_in_selected
+            if (curr_idnames != cls.prev_idnames) or (preferences.default_select_state != cls.default_select_state):
                 # remember excluded state while idnames are the same
-                cls.excluded.clear()
+                if preferences.default_select_state:
+                    cls.excluded.clear()
+                else:
+                    cls.excluded = set(curr_idnames)
+                cls.default_select_state = preferences.default_select_state
                 CategoryPG.rename_id = -1
             cls.prev_idnames = curr_idnames
+            
+            cls.is_anything_selected = bool(context.selected_objects)
+            cls.idnames_in_selected = set(name for obj in options.iterate_objects(context, search_in='SELECTION')
+                for name in BatchOperations.iter_idnames(obj))
+            
+            if options.synchronize_selection:
+                cls.excluded = curr_idnames.difference(cls.idnames_in_selected)
             
             cls.remaining_items = [enum_item
                 for enum_item in BatchOperations.enum_all()
@@ -753,13 +912,27 @@ def make_category(globalvars, idname_attr="name", **kwargs):
             
             with layout.column(True):
                 for item in self.items:
-                    with layout.row(True)(active=(item.idname not in CategoryPG.excluded)):
+                    if item.sort_id == 0:
+                        is_excluded = (self.prev_idnames == self.excluded)
+                        is_in_selected = (self.prev_idnames == self.idnames_in_selected) # here, prev is same as curr
+                        can_affect = bool(self.prev_idnames.intersection(self.idnames_in_selected))
+                    else:
+                        is_excluded = (item.idname in self.excluded)
+                        is_in_selected = (item.idname in self.idnames_in_selected)
+                        can_affect = is_in_selected
+                    
+                    can_affect |= (not options.prioritize_selection)
+                    if not self.is_anything_selected: can_affect = True
+                    
+                    with layout.row(True)(active=not is_excluded):
+                        emboss = is_in_selected
+                        
                         title = item.name or "(All)"
                         icon_kw = BatchOperations.icon_kwargs(item.idname)
                         icon_novalue = BatchOperations.icon_kwargs(item.idname, False)["icon"]
                         
-                        #layout.menu("VIEW3D_MT_batch_{}_extras".format(category_name_plural), text="", icon='DOTSDOWN')
-                        op = layout.operator("object.batch_{}_extras".format(category_name), text="", icon='DOTSDOWN')
+                        #layout.menu("VIEW3D_MT_batch_{}_extras".format(category_name_plural), text="", icon='DOTSDOWN', emboss=emboss)
+                        op = layout.operator("object.batch_{}_extras".format(category_name), text="", icon='DOTSDOWN', emboss=emboss)
                         op.idnames = item.idname or all_idnames
                         op.index = item.sort_id
                         op.title = title
@@ -767,28 +940,29 @@ def make_category(globalvars, idname_attr="name", **kwargs):
                         for cmd, cmd_kwargs, action_idname in nongeneric_actions_no_text:
                             if action_idname not in options.quick_access: continue
                             if cmd == "aggregate_toggle":
-                                aggregate_toggle(layout, item, **cmd_kwargs)
+                                aggregate_toggle(layout, item, emboss=emboss, **cmd_kwargs)
                             elif cmd == "operator":
                                 if "icon" in cmd_kwargs:
-                                    op = layout.operator(**cmd_kwargs)
+                                    op = layout.operator(emboss=emboss, **cmd_kwargs)
                                 else:
-                                    op = layout.operator(icon=icon_novalue, **cmd_kwargs)
+                                    op = layout.operator(icon=icon_novalue, emboss=emboss, **cmd_kwargs)
                                 op.idnames = item.idname or all_idnames
                                 op.index = item.sort_id
                                 op.title = title
                         
-                        if CategoryPG.rename_id == item.sort_id:
-                            layout.prop(self, "rename", text="")
+                        if self.rename_id == item.sort_id:
+                            layout.prop(self, "rename", text="", emboss=emboss)
                         else:
                             #icon_kw = BatchOperations.icon_kwargs(idname, False)
                             text = "{} ({})".format(title, item.count)
-                            op = layout.operator("object.batch_{}_name".format(category_name), text=text)
+                            op = layout.operator("object.batch_{}_name".format(category_name), text=text, emboss=emboss)
                             op.idnames = item.idname or all_idnames
                             op.index = item.sort_id
                         
-                        op = layout.operator("object.batch_{}_remove".format(category_name), text="", icon='X')
-                        op.idnames = item.idname or all_idnames
-                        op.index = item.sort_id
+                        with layout.row(True)(alert=not can_affect):
+                            op = layout.operator("object.batch_{}_remove".format(category_name), text="", icon='X', emboss=emboss)
+                            op.idnames = item.idname or all_idnames
+                            op.index = item.sort_id
     
     CategoryPG.Category_Name = Category_Name
     CategoryPG.CATEGORY_NAME = CATEGORY_NAME
@@ -797,11 +971,14 @@ def make_category(globalvars, idname_attr="name", **kwargs):
     CategoryPG.CATEGORY_NAME_PLURAL = CATEGORY_NAME_PLURAL
     CategoryPG.category_name_plural = category_name_plural
     CategoryPG.category_icon = category_icon
+    CategoryPG.BatchOperations = BatchOperations
     
     @addon.Operator(idname="object.batch_{}_extras".format(category_name), options={'INTERNAL'}, description="Extras")
     def Operator_Extras(self, context, event, idnames="", index=0, title=""):
         category = get_category()
         options = get_options()
+        
+        CategoryPG.rename_id = -1 # just for convenience (it might be hard to cancel the renaming mode otherwise)
         
         item = category.items[index]
         icon_novalue = BatchOperations.icon_kwargs(item.idname, False)["icon"]
@@ -827,7 +1004,6 @@ def make_category(globalvars, idname_attr="name", **kwargs):
         is_hide = bool(aggr_hide.min)
         is_hide_select = bool(aggr_hide_select.min)
         is_hide_render = bool(aggr_hide_render.min)
-        ('CHECKBOX_HLT', 'CHECKBOX_DEHLT')
         
         def draw_popup_menu(self, context):
             layout = NestedLayout(self.layout)
@@ -844,17 +1020,20 @@ def make_category(globalvars, idname_attr="name", **kwargs):
                     op.index = item.sort_id
                     op.title = title
             
-            icon = ('RESTRICT_VIEW_ON' if is_hide else 'RESTRICT_VIEW_OFF')
+            #icon = ('RESTRICT_VIEW_ON' if is_hide else 'RESTRICT_VIEW_OFF')
+            icon = ('CHECKBOX_DEHLT' if is_hide else 'CHECKBOX_HLT')
             op = layout.operator("object.batch_hide", icon=icon)
             op.idnames = related_objs_idnames
             op.state = not is_hide
             
-            icon = ('RESTRICT_SELECT_ON' if is_hide_select else 'RESTRICT_SELECT_OFF')
+            #icon = ('RESTRICT_SELECT_ON' if is_hide_select else 'RESTRICT_SELECT_OFF')
+            icon = ('CHECKBOX_DEHLT' if is_hide_select else 'CHECKBOX_HLT')
             op = layout.operator("object.batch_hide_select", icon=icon)
             op.idnames = related_objs_idnames
             op.state = not is_hide_select
             
-            icon = ('RESTRICT_RENDER_ON' if is_hide_render else 'RESTRICT_RENDER_OFF')
+            #icon = ('RESTRICT_RENDER_ON' if is_hide_render else 'RESTRICT_RENDER_OFF')
+            icon = ('CHECKBOX_DEHLT' if is_hide_render else 'CHECKBOX_HLT')
             op = layout.operator("object.batch_hide_render", icon=icon)
             op.idnames = related_objs_idnames
             op.state = not is_hide_render
@@ -907,14 +1086,20 @@ def make_category(globalvars, idname_attr="name", **kwargs):
     def Menu_Options(self, context):
         layout = NestedLayout(self.layout)
         options = get_options()
-        layout.prop(options, "synchronized")
-        layout.menu("VIEW3D_MT_batch_{}_options_paste_mode".format(category_name_plural), icon='PASTEDOWN')
         layout.menu("VIEW3D_MT_batch_{}_options_search_in".format(category_name_plural), icon='VIEWZOOM')
+        layout.menu("VIEW3D_MT_batch_{}_options_paste_mode".format(category_name_plural), icon='PASTEDOWN')
+        layout.prop(options, "autorefresh", text="Auto refresh")
+        layout.prop(options, "synchronized", text="Sync options")
+        layout.prop(options, "synchronize_selection", text="Sync selection")
+        layout.prop(options, "prioritize_selection", text="Affect selection")
+        layout.prop_menu_enum(options, "action_name_alt", text="Alt+Click on name", icon='HAND')
+        layout.prop_menu_enum(options, "action_assign_shift", text="Shift+Click on assign", icon='HAND')
+        layout.prop_menu_enum(options, "action_assign_alt", text="Alt+Click on assign", icon='HAND')
         for cmd, cmd_kwargs in menu_options_extra:
             getattr(layout, cmd)(**cmd_kwargs)
     
     @addon.Operator(idname="object.batch_{}_refresh".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
-    "Click: Force refresh; Ctrl+Click: Toggle auto-refresh")
+    "Click: Force refresh, Ctrl+Click: Toggle auto-refresh")
     def Operator_Refresh(self, context, event):
         category = get_category()
         options = get_options()
@@ -924,13 +1109,13 @@ def make_category(globalvars, idname_attr="name", **kwargs):
             category.refresh(context, True)
         return {'FINISHED'}
     
-    @LeftRightPanel(idname="VIEW3D_PT_batch_{}".format(category_name_plural), context="objectmode", space_type='VIEW_3D', category="Batch", label="Batch {}s".format(Category_Name))
+    @LeftRightPanel(idname="VIEW3D_PT_batch_{}".format(category_name_plural), context="objectmode", space_type='VIEW_3D', category="Batch", label="Batch {}".format(Category_Name_Plural))
     class Panel_Category:
         def draw_header(self, context):
             layout = NestedLayout(self.layout)
             category = get_category()
             options = get_options()
-            with layout.row(True):
+            with layout.row(True)(scale_x=0.9):
                 icon = CategoryOptionsPG.search_in_icons[options.search_in]
                 layout.prop_menu_enum(options, "search_in", text="", icon=icon)
                 icon = CategoryOptionsPG.paste_mode_icons[options.paste_mode]

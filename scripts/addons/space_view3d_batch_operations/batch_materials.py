@@ -32,9 +32,10 @@ except ImportError:
 
 exec("""
 from {0}dairin0d.utils_view3d import SmartView3D
+from {0}dairin0d.utils_blender import Selection
 from {0}dairin0d.utils_userinput import KeyMapUtils
 from {0}dairin0d.utils_ui import NestedLayout, tag_redraw
-from {0}dairin0d.bpy_inspect import prop, BlRna, BlEnums
+from {0}dairin0d.bpy_inspect import prop, BlRna, BlEnums, bpy_struct
 from {0}dairin0d.utils_accumulation import Aggregator, aggregated
 from {0}dairin0d.utils_addon import AddonManager
 """.format(dairin0d_location))
@@ -46,22 +47,6 @@ from .batch_common import (
 )
 
 addon = AddonManager()
-
-"""
-It's actually the data (mesh, curve, surface, metaball, text) that dictates the number of materials.
-The data has its own list of materials, but they can be overridden on object level
-by changing the corresponding slot's link type to 'OBJECT'.
-
-* options synchronization
-* in edit mode, 'SELECTION' mode should be interpreted as mesh/etc. selection?
-* [DONE] rename (for All: rename listed materials by some pattern, e.g. common name + id, or the corresponding data/object name)
-* [DONE] replace
-* merge identical?
-* make single-user copies? (this is probably useless)
-* Option "Affect data": can modify data materials or switch slot.link to OBJECT
-    * if object's data has only 1 user, we can directly modify the data anyway
-* Option "Reuse slots": when adding material, use unoccupied slots first, or always creating new ones
-"""
 
 #============================================================================#
 Category_Name = "Material"
@@ -85,25 +70,29 @@ class BatchOperations:
         return bpy.data.materials.get(material)
     
     @classmethod
+    def set_material_slot(cls, obj, ms, material):
+        max_users = (2 if obj.data.use_fake_user else 1)
+        if (obj.data.users > max_users): ms.link = 'OBJECT'
+        ms.material = material
+    
+    @classmethod
     def add_material_to_obj(cls, obj, idname):
         material = cls.to_material(idname)
+        if not material: return
         for ms in obj.material_slots:
             if not ms.material:
-                ms.link = 'OBJECT'
-                ms.material = material
+                cls.set_material_slot(obj, ms, material)
                 break
         else: # no free slots found
             obj.data.materials.append(None)
             ms = obj.material_slots[len(obj.material_slots)-1]
-            ms.link = 'OBJECT'
-            ms.material = material
+            cls.set_material_slot(obj, ms, material)
     
     @classmethod
     def clear_obj_materials(cls, obj, idnames=None, check_in=True):
         for ms in obj.material_slots:
             if (idnames is None) or ((ms.name in idnames) == check_in):
-                ms.link = 'OBJECT'
-                ms.material = None
+                cls.set_material_slot(obj, ms, None)
     
     @classmethod
     def clean_name(cls, mat):
@@ -111,6 +100,12 @@ class BatchOperations:
     
     @classmethod
     def iter_names(cls, obj):
+        for ms in obj.material_slots:
+            if not ms.material: continue
+            yield ms.name
+    
+    @classmethod
+    def iter_idnames(cls, obj):
         for ms in obj.material_slots:
             if not ms.material: continue
             yield ms.name
@@ -199,7 +194,7 @@ class BatchOperations:
                 
                 mat.use_fake_user = value
                 
-                if mesh: mesh.materials.pop(0)
+                if mesh and (len(mesh.materials) > 0): mesh.materials.pop(0)
             
             if mesh: bpy.data.meshes.remove(mesh)
         else:
@@ -244,44 +239,7 @@ class BatchOperations:
     
     @classmethod
     def remove(cls, objects, idnames, from_file=False):
-        cls.replace(objects, idnames, "", from_file)
-    
-    @classmethod
-    def replace(cls, objects, src_idnames, dst_idname, from_file=False, purge=False):
-        idnames = cls.split_idnames(src_idnames)
-        dst_material = cls.to_material(dst_idname)
-        
-        replaced_idnames = set()
-        
-        if not from_file:
-            for obj in objects:
-                for ms in obj.material_slots:
-                    if (idnames is None) or (ms.name in idnames):
-                        if ms.name: replaced_idnames.add(ms.name)
-                        ms.link = 'OBJECT'
-                        ms.material = dst_material
-        else:
-            for obj in bpy.data.objects:
-                for ms in obj.material_slots:
-                    if (idnames is None) or (ms.name in idnames):
-                        if ms.name: replaced_idnames.add(ms.name)
-                        ms.material = dst_material
-            
-            for datas in (bpy.data.meshes, bpy.data.curves, bpy.data.metaballs):
-                for data in datas:
-                    for i in range(len(data.materials)):
-                        mat = data.materials[i]
-                        if (idnames is None) or (mat and (mat.name in idnames)):
-                            if mat and mat.name: replaced_idnames.add(mat.name)
-                            data.materials[i] = dst_material
-        
-        replaced_idnames.discard(dst_idname)
-        
-        if purge and replaced_idnames:
-            cls.set_attr("use_fake_user", False, None, replaced_idnames)
-            for mat in tuple(bpy.data.materials):
-                if mat.name in replaced_idnames:
-                    bpy.data.materials.remove(mat)
+        cls.assign('REPLACE', None, objects, idnames, "", from_file)
     
     @classmethod
     def find_objects(cls, idnames, search_in, context=None):
@@ -291,10 +249,12 @@ class BatchOperations:
                 yield obj
     
     @classmethod
-    def select(cls, scene, idnames):
+    def select(cls, context, idnames, operation='SET'):
         idnames = cls.split_idnames(idnames)
-        for obj in scene.objects:
-            obj.select = any((ms.name in idnames) for ms in obj.material_slots)
+        data = {obj:"select" for obj in context.scene.objects if any((ms.name in idnames) for ms in obj.material_slots)}
+        Selection(context).update(data, operation)
+        #for obj in context.scene.objects:
+        #    obj.select = any((ms.name in idnames) for ms in obj.material_slots)
     
     @classmethod
     def purge(cls, even_with_fake_users, idnames=None):
@@ -337,14 +297,25 @@ class BatchOperations:
     def merge_identical(cls):
         unique = set(bpy.data.materials)
         identical = []
-        ignore = {"name"}
+        # ignore all properties from bpy_struct
+        ignore = {"name", "id_data", "users", "use_fake_user", "tag", "is_updated", "is_updated_data", "is_library_indirect", "library"}
+        
+        def compare_node_tree(rna_prop, valueA, valueB):
+            if (valueA is None) and (valueB is None): return True
+            if (valueA is None) or (valueB is None): return False
+            if not BlRna.compare(valueA.animation_data, valueB.animation_data): return False
+            # ignore grease pencil
+            ntkA = NodeTreeComparer.nodetree_key(valueA)
+            ntkB = NodeTreeComparer.nodetree_key(valueB)
+            return ntkA == ntkB
+        specials = {"node_tree":compare_node_tree}
         
         for item in bpy.data.materials:
             duplicates = None
             unique.discard(item)
             
             for item2 in unique:
-                if BlRna.compare(item, item2, ignore=ignore):
+                if BlRna.compare(item, item2, ignore=ignore, specials=specials):
                     if duplicates is None: duplicates = {item}
                     duplicates.add(item2)
             
@@ -366,6 +337,147 @@ class BatchOperations:
             src_idnames = idnames_separator.join(item.name for item in duplicates)
             dst_idname = best.name
             cls.replace(None, src_idnames, dst_idname, from_file=True, purge=True)
+    
+    assign_mode_default = 'ADD'
+    assign_mode_default1 = 'FILTER'
+    assign_mode_default2 = 'OVERRIDE'
+    assign_modes = [
+        ('ADD', "Add", "Add"),
+        ('FILTER', "Filter", "Filter"),
+        ('REPLACE', "Replace", "Replace"),
+        ('OVERRIDE', "Override", "Override"),
+        ('OVERRIDE_KEEP_SLOTS', "Override+", "Override without removing material slots"),
+    ]
+    @classmethod
+    def assign(cls, assign_mode, active_obj, objects, src_idnames, dst_idnames, from_file=False, purge=False):
+        src_idnames = cls.split_idnames(src_idnames) # can be None
+        dst_idnames = cls.split_idnames(dst_idnames)
+        
+        print((assign_mode, src_idnames, dst_idnames))
+        
+        # option: {switch slot to OBJECT | allow modifying the data}
+        if assign_mode == 'ADD': # previously known as "Ensure"
+            # option: {only reuse empty slots | only create new slots | create if cannot reuse}
+            for obj in objects:
+                for idname in dst_idnames.difference(cls.iter_idnames(obj)):
+                    cls.add_material_to_obj(obj, idname)
+        elif assign_mode == 'FILTER':
+            # option: {make slots empty | remove slots}
+            for obj in objects:
+                for ms in obj.material_slots:
+                    if ms.name not in dst_idnames:
+                        cls.set_material_slot(obj, ms, None)
+        else:
+            replaced_idnames = set()
+            
+            def should_replace(mat):
+                if (src_idnames is None) or (mat and (mat.name in src_idnames)):
+                    if mat: replaced_idnames.add(mat.name)
+                    return True
+                return False
+            
+            dst_materials = [cls.to_material(idname) for idname in sorted(dst_idnames) if idname]
+            if not dst_materials: dst_materials.append(None)
+            
+            if not from_file:
+                for obj in objects:
+                    i_repl = 0
+                    for ms in obj.material_slots:
+                        if should_replace(ms.material):
+                            cls.set_material_slot(obj, ms, dst_materials[i_repl])
+                            i_repl = (i_repl + 1) % len(dst_materials)
+                    
+                    if assign_mode != 'REPLACE':
+                        for i_repl in range(len(obj.material_slots), len(dst_materials)):
+                            obj.data.materials.append(None)
+                            ms = obj.material_slots[i_repl]
+                            cls.set_material_slot(obj, ms, dst_materials[i_repl])
+                    if assign_mode == 'OVERRIDE':
+                        for i in range(len(dst_materials), len(obj.material_slots)):
+                            obj.data.materials.pop(len(obj.material_slots)-1, update_data=True)
+            else:
+                for obj in bpy.data.objects:
+                    i_repl = 0
+                    for ms in obj.material_slots:
+                        if should_replace(ms.material):
+                            ms.material = dst_materials[i_repl]
+                            i_repl = (i_repl + 1) % len(dst_materials)
+                
+                for datas in (bpy.data.meshes, bpy.data.curves, bpy.data.metaballs):
+                    for data in datas:
+                        i_repl = 0
+                        for i in range(len(data.materials)):
+                            mat = data.materials[i]
+                            if should_replace(mat):
+                                data.materials[i] = dst_materials[i_repl]
+                                i_repl = (i_repl + 1) % len(dst_materials)
+                        
+                        if assign_mode != 'REPLACE':
+                            for i_repl in range(len(data.materials), len(dst_materials)):
+                                data.materials.append(None)
+                                data.materials[i_repl] = dst_materials[i_repl]
+                        if assign_mode == 'OVERRIDE':
+                            for i in range(len(dst_materials), len(data.materials)):
+                                data.materials.pop(len(data.materials)-1, update_data=True)
+            
+            replaced_idnames.difference_update(dst_idnames)
+            
+            if purge and replaced_idnames:
+                cls.set_attr("use_fake_user", False, None, replaced_idnames)
+                for mat in tuple(bpy.data.materials):
+                    if mat.name in replaced_idnames:
+                        bpy.data.materials.remove(mat)
+
+class NodeTreeComparer:
+    @classmethod
+    def link_key(cls, link):
+        return (
+            link.from_node.bl_idname,
+            link.from_node.name,
+            link.from_socket.bl_idname,
+            link.from_socket.type,
+            link.from_socket.identifier,
+            link.from_socket.enabled,
+            link.to_socket.bl_idname,
+            link.to_socket.name,
+            link.to_socket.bl_idname,
+            link.to_socket.type,
+            link.to_socket.identifier,
+            link.to_socket.enabled,
+        )
+    
+    @classmethod
+    def socket_key(cls, socket):
+        default_value = (BlRna.serialize_value(socket.default_value)
+            if hasattr(socket, "default_value") else None)
+        return (socket.bl_idname, socket.identifier,
+            socket.enabled, socket.type, default_value,
+            tuple(cls.link_key(link) for link in socket.links))
+    
+    @classmethod
+    def node_key(cls, node):
+        idname = node.bl_idname # type of node
+        name = node.name
+        internal_links = frozenset(
+            cls.link_key(link)
+            for link in node.internal_links
+        )
+        parent = node.parent
+        if parent is not None: parent = parent.name
+        inputs = frozenset(
+            cls.socket_key(socket)
+            for socket in node.inputs
+        )
+        outputs = frozenset(
+            cls.socket_key(socket)
+            for socket in node.outputs
+        )
+        return (idname, name, parent,
+            internal_links, inputs, outputs)
+    
+    @classmethod
+    def nodetree_key(cls, nodetree):
+        return frozenset(cls.node_key(node) for node in nodetree.nodes)
 
 #============================================================================#
 

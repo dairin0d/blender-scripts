@@ -16,10 +16,10 @@
 #  ***** END GPL LICENSE BLOCK *****
 
 bl_info = {
-    "name": "Batch Operations",
-    "description": "Batch control of modifiers, etc.",
+    "name": "Batch Operations / Manager",
+    "description": "Modifiers, Materials, Groups management / batch operations",
     "author": "dairin0d, moth3r",
-    "version": (0, 3, 5),
+    "version": (0, 4, 0),
     "blender": (2, 7, 0),
     "location": "View3D > Batch category in Tools panel",
     "warning": "",
@@ -81,64 +81,98 @@ Make a general mechanism of serializing/deserializing links to ID blocks? (also 
 investigate if it's possible to make a shortcut to jump to certain tab in tool shelf
 
 
-Some useful icons:
-create new ID block: NEW
-auto-update: TIME
-config/options/etc.: PREFERENCES, SAVE_PREFS
-extra options: QUESTION, INFO, COLLAPSEMENU, CHECKBOX_HLT, DOWNARROW_HLT, DOTSDOWN, LINK, INLINK
-apply/bake: REC, NLA_PUSHDOWN, FILE_TICK
-"affect what" filter: FILTER
+
+
+
+
+[DONE] use comma instead of semicolon in tooltips
+[DONE] "ensure" -> "assign to all"
+[DONE] restrict icons -> checkboxes (for everything than can be turned on/off)
+[DONE] remove "keep datablock/fake user" from quick access by default
+[DONE] rename "extra fake user" -> "Keep datablock(s)"; tooltip: += " (extra fake user)"
+[DONE] add option to switch between manual and auto refresh
+[DONE] make a preference for default selected or deselected state
+[DONE] take into account SpaceProperties.use_pin_id and SpaceProperties.pin_id
+
+// moth3r would rather have several explicit buttons than remember a lot of shortcuts
+
+[DONE] rename using a popup dialog? (might be less confusing than in-table renaming) (make it a preference?)
+
+[DONE] "rows selected by default": refresh UI when it's changed, or users will report it as a bug
+
+[DONE] move "filter mode" to the top of the options, and "paste mode" under it
+
+SELECTIONS:
+* [DONE] option: when something is selected, operations will be applied only to selected, but if nothing is selected, then filter is used
+    // previously considered as the "Afftect what" option ("Same as Filter", "Selection", "Visible", etc.) (icon: FILTER?) [This would probably complicate things too much]
+* [DONE] moth3r asks if it's possible to somehow visualize in non-Selection search_in, what items are actually in the selected
+* [DONE] Shift+click of (all) button -> invert selections (or select/deselect?) (make it a preference)
+* [DONE] option to synchronize object selection and table row selection
+* [with selection sync, not needed?] add mode for picker: clicking on object will select the rows in the table that correspond to this object (+Shift: select multiple)
+
+* [DONE] syncronization of batch options (show different icon when synchronized)
+    * [DONE] synchronized copy/paste? (e.g. copy/paste modifers and materials simultaneously)
+
+
+[DONE] category-specific action(s) on big name button? (choose any possible default action on Alt+click on name button)
+
+[DONE] new button for all assignment/replacement functions
+    on just click: popup menu with all functions
+    make options which functions are invoked on modifier+click
+    icon: for each category, use the corresponding icon (for now, use 'MODIFIER' for modifiers, even though it's used in "Apply (All)")
+
+
+globally as a UI option?
+
+add extra button for these modes (between replace and assign) for materials and groups ?
+* assign -> one slot (override)
+* assign -> same number (replace)
+* assign -> new slot (ensure)
+
+* [UNION] Make sure each object has the specified modifiers
+* [REPLACEMENT] Replace every instance of the specified modifier with a given modifier? (this probably makes no sense, though can be provided for consistency)
+* [INTERSECTION] Make sure each object has _only_ the specified modifiers (remove all other modifiers)
+* [OVERRIDE] Make sure each object _has_ the specified modifiers and _only_ them
+
+* [UNION] Make sure each object contains at least one instance of the specified materials
+    * option: {only reuse empty slots | only create new slots | create if cannot reuse}
+    * option: {switch slot to OBJECT | allow modifying the data}
+* [REPLACEMENT] Replace every instance of the specified materials with a given material
+    * option: {switch slot to OBJECT | allow modifying the data}
+* [INTERSECTION] Make sure each object contains only instances of the specified materials (unlink other materials) (sometimes if might be easier than manually removing all other materials)
+    * option: {switch slot to OBJECT | allow modifying the data}
+* [FILL] Make sure each object's slots are occupied by instances of the specified material
+    * option: {switch slot to OBJECT | allow modifying the data}
+* [FILL+UNION] Make sure each object _contains_ the specified material and _only_ it
+    * option: {switch slot to OBJECT | allow modifying the data}
+* [OVERRIDE] Replace each object's slots with one slot for each specified material
+    * option: {switch slot to OBJECT | allow modifying the data}
+
+* [UNION] Make sure each object is present in the specified groups
+* [REPLACEMENT] Replace every instance of the specified groups with a given group
+* [INTERSECTION] Make sure each object is present only in the specified groups (exclude from all other groups) (sometimes if might be easier than manually removing all other groups)
+* [OVERRIDE] Make sure each object _is_ in the specified groups and _only_ in them
+
+
+* Modifiers:
+    * [DONE] Apply Modifiers: apply_as='DATA' and/or 'SHAPE'?
+
+* Materials:
+    * option to remove unused material slots? (at least when material slot is removed from the UI, the following materials don't "shift indices")
+    * in edit mode, 'SELECTION' mode should be interpreted as mesh/etc. selection?
+    * Option "Affect data": can modify data materials or switch slot.link to OBJECT
+        * [DONE] if object's data has only 1 user, we can directly modify the data anyway
+    * option to override material slots or to preserve them
+    * Option "Reuse slots": when adding material, use unoccupied slots first, or always creating new ones
+    * [DONE] Merge identical: also compare Node trees, even though they are ID blocks. It seems like Blender forces a "each material has its own shader tree" situation, so one can't really use same shader tree for several materials?
+
+
 
 
 // seems like ANY menu/enum in panel header will have issues with background menus/enums (report a bug?)
 
-* [DONE] rename "assign" to "ensure" (the new "assign" would be what moth3r wanted: replace all + add if nothing to replace)
-
-* [DONE] in preferences: for each category, allow user to specify which flags should be "quick access" (others will be hidden in a menu)
-* [DONE] make Apply Modifier a separate button
-* [DONE] change control scheme for name button:
-    * Click: select the corresponding objects in the scene
-    * Shift+Click: (de)select the corresponding row
-    * Alt+Click: ensure/assign (ensure is less ambiguous than assign) (+Ctrl: globally)
-    * Ctrl+Click: rename
-
-(priority for moth3r):
-* [DONE] moth3r wants to have an option that replaces all with certain material and adds this material if there are no material slots; do it on shift+click on "replace" button
-* [DONE] add button for showing/hiding by group/material/modifier/etc., restrict/allow selection and rendering (also: move to layer?)
-* [DONE] parent to empty by material/group/etc. ? (Ivan needs this for his rendering program, since he has to go export-import FBX, so he can mass-assign materials in this program only by using parents)
-    * this seems like a too specific feature for me. Maybe he can just Ctrl+Shift+click on material/group/etc. and the invoke a separate operator that would parent the selected objects to an empty?
-    * moth3r argues that this is quite useful for many people. Flatten the hierarchy (no parents at all) (if some parents are empties, delete them), then parent all to a new empty at a center/average (empty's name = concatenation of idnames?)
-Hmm, maybe just add an "Extras" menu?
-
-* "Afftect" option? ("Same as Filter", "Selection", "Visible", etc.) [This would probably complicate things too much]
-
-for transforms: see Apply menu (rot/pos/scale, visual transform, make duplicates real?)
-See also: https://github.com/sebastian-k/scripts/blob/master/power_snapping_pies.py (what of this is applicable to batch operations?)
 
 
-for copy/pasting (and other operations that work on active object), take into account SpaceProperties.use_pin_id and SpaceProperties.pin_id?
-
-
-syncronization of batch options (show different icon when synchronized)
-
-synchronized copy/paste? (e.g. copy/paste modifers and materials simultaneously)
-
-also: layers (see also: Layer Management addon by Bastien Montagne)
-
-moth3r suggested copy/pasting objects (in particular, so that pasting an object won't create duplicate materials)
-copy/paste inside group? (in the selected batch groups)
-
-* single-click parenting: show a list of top-level objects? (i.e. without parents)
-    * Actually there is a nice addon http://blenderaddonlist.blogspot.com/2014/06/addon-parent-to-empty.html
-    * That could be shift+click or click operation for all selected objects depending on button.
-* material: apply() -> all objects in selection should become that material (or: shift+click?) -- this is a priority
-* group: apply() (same behaviour)
-
-Projected feature-set (vision):
-* [REMOVED] Refresh (Hopefully, we won't need refresh-by-time, since now we have refresh on actual change)
-    * [REMOVED] Auto-refresh on/off
-    * [REMOVED] Auto-refresh interval
-    * [REMOVED] Force refresh (manual refresh)
 * Operators
     * Batch apply operator (search field)
     * operator's draw (if not defined, use automatic draw)
@@ -148,75 +182,20 @@ Projected feature-set (vision):
     * Transform summary + ability to modify if possible
     * Coordinate systems?
     * Non-instant evaluation? Or, if determining the moment of change is possible, use instant evaluation?
-* Modifiers
-    * Control row:
-        * Add
-        * Pick
-        * Copy
-        * Paste
-        * Copy/Paste mode: SET, OR (union), AND (intersection)
-        * For: selection, visible, layer, scene, .blend
-        * Option to convert curves to meshes / make meshes single-user before applying the modifiers?
-    * Table:
-        * Checkbox for specifying which items should be affected by "All"-level operations
-        * Show expanded? (+Shift: globally/completely?)
-        * Use in render (+Shift: globally/completely?)
-        * Use in viewport (+Shift: globally/completely?)
-        * Use in edit mode (+Shift: globally/completely?)
-        * Use in cage (+Shift: globally/completely?)
-        * Use in spline (use_apply_on_spline?) (+Shift: globally/completely?)
-        * Ensure (this seems like a redundant feature, as the same effect can be done by copy-pasting specific items from the list)
-        * Apply (apply_as='DATA' and/or 'SHAPE'?) (+Shift: globally/completely?)
-            * This is the long "name (number of uses)" property/button
-        * Remove (+Shift: globally/completely?)
-* Materials
-    * Control row:
-        * Add (search? <Create new>? List of all materials not used in the selection?)
-        * Pick
-        * Copy
-        * Paste
-        * Copy/Paste mode: SET, OR (union), AND (intersection)
-        * For: selection, visible, layer, scene, .blend
-        * Option to prune all unused materials? (+option to respect/ignore use_fake_user?)
-        * Option to rename listed materials by some pattern? (e.g. common name + id, or the corresponding data/object name)
-        * Option: always modify only object, or affect object.data as well? (if modify-only-object, then the corresponding slot will be set to link='OBJECT' on modification)
-        * Option: when removing materials, set slot.material, or remove slot completely? (probably not very useful)
-        * Option: when adding material to objects, use unoccupied slots first, before creating new ones?
-    * Table:
-        * Checkbox for specifying which items should be affected by "All"-level operations
-        * use_fake_user? ("Save this datablock even if it has no users") (+Shift: globally/completely?)
-        * Replace with other material? (+Shift: globally/completely?)
-        * Ensure? (this seems like a redundant feature, as the same effect can be done by copy-pasting specific items from the list)
-        * make single-user copies?
-        * Rename? (by double-clicking? or a text field in the table?)
-        * ... ? This is the long "name (number of uses)" property/button
-        * Remove (+Shift: globally/completely? +Sift+Ctrl: even those with use_fake_user?)
-* Object Groups
-    * Control row:
-        * Add (search? <Create new>? List of all groups not used in the selection?)
-        * Pick
-        * Copy
-        * Paste
-        * Copy/Paste mode: SET, OR (union), AND (intersection)
-        * For: selection, visible, layer, scene, .blend
-        * Option to prune all unused groups? (+option to respect/ignore use_fake_user?)
-        * Option to rename listed groups by some pattern? (e.g. common name + id, or the corresponding data/object name)
-    * Table:
-        * Checkbox for specifying which items should be affected by "All"-level operations
-        * use_fake_user? ("Save this datablock even if it has no users") (+Shift: globally/completely?)
-        * Replace with other group? (+Shift: globally/completely?)
-        * Merge with other group? (+Shift: globally/completely?)
-        * Ensure? (this seems like a redundant feature, as the same effect can be done by copy-pasting specific items from the list)
-        * Rename? (by double-clicking? or a text field in the table?)
-        * ... ? This is the long "name (number of uses)" property/button
-        * Remove (+Shift: globally/completely? +Sift+Ctrl: even those with use_fake_user?)
-        * Dupli visibility Layers?
-        * Dupli Offset?
+    * single-click parenting: show a list of top-level objects? (i.e. without parents)
+        * Actually there is a nice addon http://blenderaddonlist.blogspot.com/2014/06/addon-parent-to-empty.html
+        * That could be shift+click or click operation for all selected objects depending on button.
+    * moth3r suggested copy/pasting objects (in particular, so that pasting an object won't create duplicate materials)
+    * copy/paste inside group? (in the selected batch groups)
+    * for transforms: see Apply menu (rot/pos/scale, visual transform, make duplicates real?)
+    * See also: https://github.com/sebastian-k/scripts/blob/master/power_snapping_pies.py (what of this is applicable to batch operations?)
 * Constraints
     ...
 * Vertex Groups
     * (moth3r asks) remove unused groups
     ...
+* Layers?
+    * see also: Layer Management addon by Bastien Montagne
 """
 
 #============================================================================#
@@ -226,7 +205,9 @@ def Batch_Properties_Copy(self, context):
     properties_context = context.space_data.context
     Category = addon.preferences.copy_paste_contexts.get(properties_context)
     if Category is None: return
-    getattr(bpy.ops.object, "batch_{}_copy".format(Category.category_name))()
+    pin_id = context.space_data.pin_id
+    object_name = (pin_id.name if isinstance(pin_id, bpy.types.Object) else "")
+    getattr(bpy.ops.object, "batch_{}_copy".format(Category.category_name))(object_name=object_name)
 
 @addon.Operator(idname="object.batch_properties_paste", space_type='PROPERTIES', label="Batch Properties Paste")
 def Batch_Properties_Copy(self, context):
@@ -240,6 +221,78 @@ class ThisAddonPreferences:
     refresh_interval = 0.5 | prop("Auto-refresh interval", name="Refresh interval", min=0.0)
     use_panel_left = True | prop("Show in T-panel", name="T (left panel)")
     use_panel_right = False | prop("Show in N-panel", name="N (right panel)")
+    default_select_state = True | prop("Default row selection state", name="Rows selected by default")
+    use_rename_popup = True | prop("Use a separate dialog for batch renaming", name="Use popup dialog for renaming")
+    
+    sync_lock = False
+    
+    def sync_names(self):
+        cls = self.__class__
+        names = []
+        for Category in cls.categories:
+            options = getattr(self, Category.category_name_plural)
+            if options.synchronized:
+                names.append(Category.Category_Name_Plural)
+        return "/".join(names)
+    
+    def sync_copy(self, active_obj):
+        cls = self.__class__
+        for Category in cls.categories:
+            options = getattr(self, Category.category_name_plural)
+            if options.synchronized:
+                Category.BatchOperations.copy(active_obj, Category.excluded)
+    
+    def sync_paste(self, context, paste_mode):
+        cls = self.__class__
+        for Category in cls.categories:
+            options = getattr(self, Category.category_name_plural)
+            if options.synchronized:
+                Category.BatchOperations.paste(options.iterate_objects(context), paste_mode)
+                category = getattr(addon.external, Category.category_name_plural)
+                category.tag_refresh()
+    
+    def sync_add(self, active_options, active_category_name_plural):
+        if not active_options.synchronized: return False
+        cls = self.__class__
+        if cls.sync_lock: return False
+        cls.sync_lock = True
+        
+        src_options = None
+        for Category in cls.categories:
+            if (Category.category_name_plural == active_category_name_plural): continue
+            options = getattr(self, Category.category_name_plural)
+            if options.synchronized:
+                src_options = options
+                break
+        
+        if src_options:
+            active_options.synchronize_selection = src_options.synchronize_selection
+            active_options.prioritize_selection = src_options.prioritize_selection
+            active_options.autorefresh = src_options.autorefresh
+            active_options.paste_mode = src_options.paste_mode
+            active_options.search_in = src_options.search_in
+        
+        cls.sync_lock = False
+        return True
+    
+    def sync_update(self, active_options, active_category_name_plural):
+        if not active_options.synchronized: return False
+        cls = self.__class__
+        if cls.sync_lock: return False
+        cls.sync_lock = True
+        
+        for Category in cls.categories:
+            if (Category.category_name_plural == active_category_name_plural): continue
+            options = getattr(self, Category.category_name_plural)
+            if options.synchronized:
+                options.synchronize_selection = active_options.synchronize_selection
+                options.prioritize_selection = active_options.prioritize_selection
+                options.autorefresh = active_options.autorefresh
+                options.paste_mode = active_options.paste_mode
+                options.search_in = active_options.search_in
+        
+        cls.sync_lock = False
+        return True
     
     def draw(self, context):
         layout = NestedLayout(self.layout)
@@ -248,6 +301,10 @@ class ThisAddonPreferences:
             layout.prop(self, "refresh_interval")
             layout.prop(self, "use_panel_left")
             layout.prop(self, "use_panel_right")
+        
+        with layout.row()(alignment='LEFT'):
+            layout.prop(self, "default_select_state")
+            layout.prop(self, "use_rename_popup")
         
         with layout.row()(alignment='LEFT'):
             with layout.column():

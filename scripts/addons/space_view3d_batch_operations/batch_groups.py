@@ -32,9 +32,10 @@ except ImportError:
 
 exec("""
 from {0}dairin0d.utils_view3d import SmartView3D
+from {0}dairin0d.utils_blender import Selection
 from {0}dairin0d.utils_userinput import KeyMapUtils
 from {0}dairin0d.utils_ui import NestedLayout, tag_redraw
-from {0}dairin0d.bpy_inspect import prop, BlRna, BlEnums
+from {0}dairin0d.bpy_inspect import prop, BlRna, BlEnums, bpy_struct
 from {0}dairin0d.utils_accumulation import Aggregator, aggregated
 from {0}dairin0d.utils_addon import AddonManager
 """.format(dairin0d_location))
@@ -69,6 +70,7 @@ class BatchOperations:
     @classmethod
     def add_group_to_obj(cls, obj, idname):
         group = cls.to_group(idname)
+        if not group: return
         if obj.name not in group.objects: group.objects.link(obj)
     
     @classmethod
@@ -83,6 +85,11 @@ class BatchOperations:
     
     @classmethod
     def iter_names(cls, obj):
+        for group in bpy.data.groups:
+            if obj.name in group.objects: yield group.name
+    
+    @classmethod
+    def iter_idnames(cls, obj):
         for group in bpy.data.groups:
             if obj.name in group.objects: yield group.name
     
@@ -192,7 +199,6 @@ class BatchOperations:
     
     @classmethod
     def add(cls, objects, idnames):
-        print("adding %s" % idnames)
         idnames = cls.split_idnames(idnames)
         for obj in objects:
             for idname in idnames:
@@ -207,33 +213,7 @@ class BatchOperations:
     
     @classmethod
     def remove(cls, objects, idnames, from_file=False):
-        cls.replace(objects, idnames, "", from_file)
-    
-    @classmethod
-    def replace(cls, objects, src_idnames, dst_idname, from_file=False, purge=False):
-        idnames = cls.split_idnames(src_idnames)
-        dst_group = cls.to_group(dst_idname)
-        
-        replaced_idnames = set()
-        
-        if from_file: objects = bpy.data.objects
-        
-        for obj in objects:
-            for group in bpy.data.groups:
-                if obj.name not in group.objects: continue
-                if (idnames is None) or (group.name in idnames):
-                    replaced_idnames.add(group.name)
-                    group.objects.unlink(obj)
-                    if dst_group and (obj.name not in dst_group.objects):
-                        dst_group.objects.link(obj)
-        
-        replaced_idnames.discard(dst_idname)
-        
-        if purge and replaced_idnames:
-            cls.set_attr("use_fake_user", False, None, replaced_idnames)
-            for group in tuple(bpy.data.groups):
-                if group.name in replaced_idnames:
-                    bpy.data.groups.remove(group)
+        cls.assign('REPLACE', None, objects, idnames, "", from_file)
     
     @classmethod
     def find_objects(cls, idnames, search_in, context=None):
@@ -244,11 +224,13 @@ class BatchOperations:
                 yield obj
     
     @classmethod
-    def select(cls, scene, idnames):
+    def select(cls, context, idnames, operation='SET'):
         idnames = cls.split_idnames(idnames)
         groups = [group for group in bpy.data.groups if group.name in idnames]
-        for obj in scene.objects:
-            obj.select = any((obj.name in group.objects) for group in groups)
+        data = {obj:"select" for obj in context.scene.objects if any((obj.name in group.objects) for group in groups)}
+        Selection(context).update(data, operation)
+        #for obj in context.scene.objects:
+        #    obj.select = any((obj.name in group.objects) for group in groups)
     
     @classmethod
     def purge(cls, even_with_fake_users, idnames=None):
@@ -292,7 +274,8 @@ class BatchOperations:
     def merge_identical(cls):
         unique = set(bpy.data.groups)
         identical = []
-        ignore = {"name"}
+        # ignore all properties from bpy_struct
+        ignore = {"name", "id_data", "users", "use_fake_user", "tag", "is_updated", "is_updated_data", "is_library_indirect", "library"}
         
         for item in bpy.data.groups:
             duplicates = None
@@ -321,6 +304,84 @@ class BatchOperations:
             src_idnames = idnames_separator.join(item.name for item in duplicates)
             dst_idname = best.name
             cls.replace(None, src_idnames, dst_idname, from_file=True, purge=True)
+    
+    assign_mode_default = 'ADD'
+    assign_mode_default1 = 'FILTER'
+    assign_mode_default2 = 'OVERRIDE'
+    assign_modes = [
+        ('ADD', "Add", "Add"),
+        ('FILTER', "Filter", "Filter"),
+        ('REPLACE', "Replace", "Replace"),
+        ('OVERRIDE', "Override", "Override"),
+    ]
+    @classmethod
+    def assign(cls, assign_mode, active_obj, objects, src_idnames, dst_idnames, from_file=False, purge=False):
+        src_idnames = cls.split_idnames(src_idnames) # can be None
+        dst_idnames = cls.split_idnames(dst_idnames)
+        
+        if assign_mode == 'ADD': # previously known as "Ensure"
+            for obj in objects:
+                existing_idnames = set(cls.iter_idnames(obj))
+                idnames_to_add = dst_idnames.difference(existing_idnames)
+                idnames_to_add.discard("")
+                
+                for idname in idnames_to_add:
+                    cls.add_group_to_obj(obj, idname)
+        elif assign_mode == 'FILTER':
+            for obj in objects:
+                for group in bpy.data.groups:
+                    if obj.name not in group.objects: continue
+                    if group.name not in dst_idnames:
+                        group.objects.unlink(obj)
+        else:
+            replaced_idnames = set()
+            
+            dst_groups = set(cls.to_group(idname) for idname in sorted(dst_idnames) if idname)
+            
+            objects = (bpy.data.objects if from_file else tuple(objects)) # need to iterate multiple times
+            
+            if assign_mode == 'REPLACE':
+                def should_replace(group):
+                    if (src_idnames is None) or (group.name in src_idnames):
+                        replaced_idnames.add(group.name)
+                        return True
+                    return False
+                
+                for obj in objects:
+                    for group in bpy.data.groups:
+                        if obj.name not in group.objects: continue
+                        
+                        if should_replace(group):
+                            group.objects.unlink(obj)
+                            
+                            for dst_group in dst_groups:
+                                if (obj.name not in dst_group.objects):
+                                    dst_group.objects.link(obj)
+            else:
+                def should_replace(group):
+                    if (group.name not in dst_idnames):
+                        replaced_idnames.add(group.name)
+                        return True
+                    return False
+                
+                for obj in objects:
+                    for group in bpy.data.groups:
+                        if obj.name not in group.objects: continue
+                        
+                        if should_replace(group):
+                            group.objects.unlink(obj)
+                    
+                    for dst_group in dst_groups:
+                        if (obj.name not in dst_group.objects):
+                            dst_group.objects.link(obj)
+            
+            replaced_idnames.difference_update(dst_idnames)
+            
+            if purge and replaced_idnames:
+                cls.set_attr("use_fake_user", False, None, replaced_idnames)
+                for group in tuple(bpy.data.groups):
+                    if group.name in replaced_idnames:
+                        bpy.data.groups.remove(group)
 
 #============================================================================#
 

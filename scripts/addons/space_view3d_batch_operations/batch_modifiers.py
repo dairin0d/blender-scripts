@@ -32,6 +32,7 @@ except ImportError:
 
 exec("""
 from {0}dairin0d.utils_view3d import SmartView3D
+from {0}dairin0d.utils_blender import Selection
 from {0}dairin0d.utils_userinput import KeyMapUtils
 from {0}dairin0d.utils_ui import NestedLayout, tag_redraw
 from {0}dairin0d.bpy_inspect import prop, BlRna, BlEnums
@@ -72,6 +73,10 @@ class BatchOperations:
     @classmethod
     def iter_names(cls, obj):
         for md in obj.modifiers: yield cls.clean_name(md)
+    
+    @classmethod
+    def iter_idnames(cls, obj):
+        for md in obj.modifiers: yield md.type
     
     @classmethod
     def enum_all(cls):
@@ -139,7 +144,7 @@ class BatchOperations:
             else:
                 for md in obj.modifiers:
                     if md.type in idnames:
-                        _setattr(ms.material, name, value, **kwargs)
+                        _setattr(md, name, value, **kwargs)
     
     @classmethod
     def clear(cls, objects):
@@ -177,7 +182,7 @@ class BatchOperations:
                 if src_item: copyattrs(src_item, md)
     
     @classmethod
-    def apply(cls, objects, scene, idnames, options=()):
+    def apply(cls, objects, scene, idnames, options=(), apply_as='DATA'):
         idnames = cls.split_idnames(idnames)
         
         active_obj = scene.objects.active
@@ -204,7 +209,7 @@ class BatchOperations:
                 
                 is_disabled = False
                 try:
-                    bpy.ops.object.modifier_apply(modifier=md.name) # not type or idname!
+                    bpy.ops.object.modifier_apply(modifier=md.name, apply_as=apply_as) # not type or idname!
                 except RuntimeError as exc:
                     #print(repr(exc))
                     exc_msg = exc.args[0].lower()
@@ -218,12 +223,7 @@ class BatchOperations:
     
     @classmethod
     def remove(cls, objects, idnames, from_file=False):
-        idnames = cls.split_idnames(idnames)
-        if from_file: objects = bpy.data.objects
-        for obj in objects:
-            for md in tuple(obj.modifiers):
-                if md.type in idnames:
-                    obj.modifiers.remove(md)
+        cls.assign('REPLACE', None, objects, idnames, "", from_file)
     
     @classmethod
     def find_objects(cls, idnames, search_in, context=None):
@@ -233,10 +233,12 @@ class BatchOperations:
                 yield obj
     
     @classmethod
-    def select(cls, scene, idnames):
+    def select(cls, context, idnames, operation='SET'):
         idnames = cls.split_idnames(idnames)
-        for obj in scene.objects:
-            obj.select = any((md.type in idnames) for md in obj.modifiers)
+        data = {obj:"select" for obj in context.scene.objects if any((md.type in idnames) for md in obj.modifiers)}
+        Selection(context).update(data, operation)
+        #for obj in context.scene.objects:
+        #    obj.select = any((md.type in idnames) for md in obj.modifiers)
     
     @classmethod
     def purge(cls, even_with_fake_users, idnames=None):
@@ -265,16 +267,81 @@ class BatchOperations:
                 for md in tuple(obj.modifiers):
                     if md.type not in idnames:
                         obj.modifiers.remove(md)
+    
+    assign_mode_default = 'ADD'
+    assign_mode_default1 = 'FILTER'
+    assign_mode_default2 = 'OVERRIDE'
+    assign_modes = [
+        ('ADD', "Add", "Add"),
+        ('FILTER', "Filter", "Filter"),
+        ('REPLACE', "Replace", "Replace"),
+        ('OVERRIDE', "Override", "Override"),
+    ]
+    @classmethod
+    def assign(cls, assign_mode, active_obj, objects, src_idnames, dst_idnames, from_file=False, purge=False):
+        src_idnames = cls.split_idnames(src_idnames) # can be None
+        dst_idnames = cls.split_idnames(dst_idnames)
+        
+        objects = (bpy.data.objects if from_file else tuple(objects)) # need to iterate multiple times
+        
+        if assign_mode != 'FILTER':
+            # collect parameter sources (hmm, maybe if not present in given objects, search in all?)
+            attr_sources = {}
+            for obj in objects:
+                for md in obj.modifiers:
+                    if md.type not in dst_idnames: continue
+                    if (obj == active_obj) or (md.type not in attr_sources):
+                        attr_sources[md.type] = md
+            
+            def copy_params(md):
+                attr_source = attr_sources.get(md.type)
+                if attr_source: copyattrs(attr_source, md)
+        
+        if assign_mode == 'ADD': # previously known as "Ensure"
+            for obj in objects:
+                existing_idnames = set(cls.iter_idnames(obj))
+                idnames_to_add = dst_idnames.difference(existing_idnames)
+                idnames_to_add.discard("")
+                
+                for idname in idnames_to_add:
+                    copy_params(obj.modifiers.new(idname.capitalize(), idname))
+        elif assign_mode == 'FILTER':
+            for obj in objects:
+                for md in tuple(obj.modifiers):
+                    if md.type not in dst_idnames:
+                        obj.modifiers.remove(md)
+        else:
+            for obj in objects:
+                existing_idnames = set(cls.iter_idnames(obj))
+                if (src_idnames is None) or (assign_mode == 'OVERRIDE'):
+                    idnames_to_remove = existing_idnames
+                else:
+                    idnames_to_remove = src_idnames.intersection(existing_idnames)
+                idnames_to_remove = idnames_to_remove.difference(dst_idnames)
+                idnames_to_add = dst_idnames.difference(existing_idnames)
+                idnames_to_add.discard("")
+                
+                should_replace = (assign_mode == 'OVERRIDE')
+                for md in tuple(obj.modifiers):
+                    if md.type in idnames_to_remove:
+                        obj.modifiers.remove(md)
+                        should_replace = True
+                
+                if should_replace:
+                    for idname in idnames_to_add:
+                        copy_params(obj.modifiers.new(idname.capitalize(), idname))
 
 #============================================================================#
 
 @addon.Operator(idname="object.batch_{}_apply".format(category_name), options={'INTERNAL', 'REGISTER'}, description=
-"Click: Apply (+Ctrl: globally)")
+"Click: Apply (+Ctrl: globally, +Alt: as shape)")
 def Operator_Apply(self, context, event, idnames="", index=0, title=""):
     category = get_category()
     options = get_options()
-    bpy.ops.ed.undo_push(message="Batch Apply {}s".format(Category_Name))
-    BatchOperations.apply(options.iterate_objects(context, event.ctrl), context.scene, idnames, options.apply_options)
+    apply_as = 'DATA'
+    if event and event.alt: apply_as = 'SHAPE'
+    bpy.ops.ed.undo_push(message="Batch Apply {}".format(Category_Name_Plural))
+    BatchOperations.apply(options.iterate_objects(context, event.ctrl), context.scene, idnames, options.apply_options, apply_as=apply_as)
     category.tag_refresh()
     return {'FINISHED'}
 
@@ -286,13 +353,13 @@ class OptionsMixin:
         ('REMOVE_DISABLED', "Remove disabled", "Remove disabled", 'GHOST_DISABLED'),
     ])
 
-@addon.Menu(idname="VIEW3D_MT_batch_{}s_options_apply_options".format(category_name), label="Apply Modifier") # <============ CATEGORY-SPECIFIC
+@addon.Menu(idname="VIEW3D_MT_batch_{}_options_apply_options".format(category_name_plural), label="Apply Modifier")
 def Menu_ApplyModifierOptions(self, context):
     """Apply Modifier options"""
     layout = NestedLayout(self.layout)
     options = get_options()
     layout.props_enum(options, "apply_options")
-menu_options_extra = [("menu", dict(menu="VIEW3D_MT_batch_{}s_options_apply_options".format(category_name), icon=category_icon))]
+menu_options_extra = [("menu", dict(menu="VIEW3D_MT_batch_{}_options_apply_options".format(category_name_plural), icon=category_icon))]
 
 aggregate_attrs = [
     #("show_expanded", dict(tooltip="Are modifier(s) expanded in the UI", icons=('TRIA_DOWN', 'TRIA_RIGHT'))),
