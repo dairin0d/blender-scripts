@@ -991,7 +991,7 @@ class MouselookNavigation:
     def register_handlers(self, context):
         wm = context.window_manager
         wm.modal_handler_add(self)
-        self._timer = addon.timer_add(wm, 0.01, context.window)
+        self._timer = addon.timer_add(0.01, context.window)
         self._handle_view = addon.draw_handler_add(bpy.types.SpaceView3D, draw_callback_view, (self, context), 'WINDOW', 'POST_VIEW')
     
     def unregister_handlers(self, context):
