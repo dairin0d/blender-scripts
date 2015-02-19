@@ -1446,6 +1446,7 @@ class ThisAddonPreferences:
             inp_set.draw(layout)
 
 def register():
+    addon.use_zbuffer = True
     addon.register()
     
     addon.draw_handler_add(bpy.types.SpaceView3D, draw_callback_px, (None, None), 'WINDOW', 'POST_PIXEL')
