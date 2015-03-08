@@ -34,7 +34,7 @@ except ImportError:
 exec("""
 from {0}dairin0d.utils_math import matrix_compose, matrix_decompose, matrix_inverted_safe
 from {0}dairin0d.utils_python import setattr_cmp, setitem_cmp
-from {0}dairin0d.utils_view3d import SmartView3D
+from {0}dairin0d.utils_view3d import SmartView3D, Pick_Base
 from {0}dairin0d.utils_blender import Selection
 from {0}dairin0d.utils_userinput import KeyMapUtils
 from {0}dairin0d.utils_ui import NestedLayout, tag_redraw, rv3d_from_region
@@ -43,27 +43,21 @@ from {0}dairin0d.utils_accumulation import Aggregator, VectorAggregator
 from {0}dairin0d.utils_addon import AddonManager, UIMonitor
 """.format(dairin0d_location))
 
-from .batch_common import (
-    copyattrs, attrs_to_dict, dict_to_attrs, PatternRenamer,
-    Pick_Base, LeftRightPanel, make_category,
-    round_to_bool, is_visible, has_common_layers, idnames_separator,
-)
-
 addon = AddonManager()
 
 """
-Make 'batch transforms' a separate addon? (Spatial operations? Transformations & Coordsystems?)
+Make 'batch transforms' a separate addon? (Spatial operations? Transformations & Coordsystems? Transform Utils?)
+moth3r suggests to name addon "Batch Transforms" (as the most intuitive)
+
 
 TODO:
 * sync coordsystems/summaries/etc. between 3D views
 * Pick transform? (respecting axis locks)
-* \\ (batch) apply location/rotation/scale/etc. (in Object mode) -- the builtin Apply Object Transform operator already does that
-* \\ (batch) change origin of geometry -- the builtin Set Origin operator already does that
-* cursor/bookmark/etc. to active/min/max/center/mean/median? (in global or original coodinates)?
-* Vector swizzle? (evaluate as python expression? e.g. w,x,y,z -> -w,0.5*z,y,2*x) (apply to summary or to each individual object?)
-* Per-summary copy/paste (respecting uniformity locks) (option: using units or the raw values ?)
-* Per-vector copy/paste (respecting uniformity locks) (option: using units or the raw values ?)
-* Coordinate systems
+* Other modes
+* 3D cursor
+* make comparison threshold (epsilon) customizable?
+
+Coordinate systems:
     * \\ built-in coordinate systems should be not editable ?
     * "local grid" rendering (around object / cursor / etc.)
     * CAD-like guides?
@@ -71,31 +65,27 @@ TODO:
       is ignored by the Knife tool. However, guides can be used to at least
       visually show where to move the knife
     * Bookmarks? probably not. The functionality of surface/bookmarks can be achieved via custom coordinate systems.
-* Other modes
-* 3D cursor
+    * Create TransformOrientation from Coordsystem?
 
-* make buttons to zero/reset objects' pos/rot/scale in current coordiante system
-  also: make sure it's possibe to invoke it via a keyboard shortcut
-* for convenience, put access to the built-in Apply Object Transform operator in the same place?
+"Transform box"? (for visual "box" transformation as seen in some other apps)
+    * "geometry" summary is too complicated to calculate in background (+ needs conversion to mesh anyway) but might be feasible as a on-request calculation
 
-* make comparison threshold (epsilon) customizable?
+Summary extras:
+* per-vector copy/paste (respecting uniformity locks) (option: using units or the raw values ?)
 
-Investigate:
-* moth3r asks if it's possible to rotate/scale around different point than each object's origin
-    * probably not. However, we might be able to add a "temporarily parent selected to a temporary empty", which then can be transformed as desired, and then original parents can be restored
-* Spatial queries? ("select all objects wich satisfy the following conditions")
-* Manhattan distance as one of the coordsys Space options?
-
-* "Transform box"? (for visual "box" transformation as seen in some other apps)
-
-? "geometry" summary is too complicated to calculate in background (+ needs conversion to mesh anyway)
-  but might be feasible as a on-request calculation
-
-From http://wiki.blender.org/index.php/Dev:Doc/Quick_Hacks
-- Use of 3d manipulator to move and scale Texture Space?
+Vector extras:
+* reset vector(s) (pos/rot/scale/etc.) in current coordiante system (option: whether to respect axis locks)
+	* make sure it's possibe to invoke it via a keyboard shortcut
+* swizzle? (evaluate as python expression? e.g. w,x,y,z -> -w,0.5*z,y,2*x) (option: apply to summary or to each individual object)
+* per-summary copy/paste (respecting uniformity locks) (option: using units or the raw values ?)
+* Specific to Object mode:
+    * built-in Apply Object Transform operator?
+* Specific to "Location" vector:
+    * built-in Set Origin operator?
+    * \\ cursor/bookmark/etc. to active/min/max/center/mean/median? (redundant: can be achieved via copy-pasting, given that coordinate system is the same)
 
 see also: http://modo.docs.thefoundry.co.uk/modo/601/help/pages/modotoolbox/ActionCenters.html
-also: work plane?
+also: work plane? (ON: align view to "work plane", switch object creation to VIEW; OFF: switch object creation to WORLD)
 
 See Modo's Absolute Scaling
 https://www.youtube.com/watch?v=79BAHXLX9JQ
@@ -103,17 +93,27 @@ http://community.thefoundry.co.uk/discussion/topic.aspx?f=33&t=34229
 see scale_in_modo.mov for ideas
 fusion 360 has a lot of cool features (moth3r says it's the most user-friendly CAD)
 
+Investigate:
+* moth3r asks if it's possible to rotate/scale around different point than each object's origin
+    * probably not. However, we might be able to add a "temporarily parent selected to a temporary empty", which then can be transformed as desired, and then original parents can be restored
+* Spatial queries? ("select all objects wich satisfy the following conditions")
+* Manhattan distance as one of the coordsys Space options?
+
 \\ Ivan suggests to check the booleans addon (to test for possible conflicts)
 \\ Ivan suggests to report blender bugs
-Ivan asks to ignore modes that aren't implemented yet (right now it prints lots of errors)
 
 documentation (Ivan suggests to use his taser model for illustrations)
 (what's working, what's not)
 (no need to explain what's not working)
 (Ivan suggests to post on forum after he makes video tutorial)
+
+From http://wiki.blender.org/index.php/Dev:Doc/Quick_Hacks
+- Use of 3d manipulator to move and scale Texture Space?
 """
 
 #============================================================================#
+# Leftovers from the Batch Operations
+
 Category_Name = "Transform"
 CATEGORY_NAME = Category_Name.upper()
 category_name = Category_Name.lower()
@@ -122,6 +122,39 @@ CATEGORY_NAME_PLURAL = Category_Name_Plural.upper()
 category_name_plural = Category_Name_Plural.lower()
 category_icon = 'MANIPUL'
 
+def LeftRightPanel(cls=None, **kwargs):
+    def AddPanels(cls, kwargs):
+        doc = cls.__doc__
+        name = kwargs.get("bl_idname") or kwargs.get("idname") or cls.__name__
+        
+        # expected either class or function
+        if not isinstance(cls, type):
+            cls = type(name, (), dict(__doc__=doc, draw=cls))
+        
+        poll = getattr(cls, "poll", None)
+        if poll:
+            poll_left = classmethod(lambda cls, context: addon.preferences.use_panel_left and poll(cls, context))
+            poll_right = classmethod(lambda cls, context: addon.preferences.use_panel_right and poll(cls, context))
+        else:
+            poll_left = classmethod(lambda cls, context: addon.preferences.use_panel_left)
+            poll_right = classmethod(lambda cls, context: addon.preferences.use_panel_right)
+        
+        @addon.Panel(**kwargs)
+        class LeftPanel(cls):
+            bl_idname = name + "_left"
+            bl_region_type = 'TOOLS'
+            poll = poll_left
+        
+        @addon.Panel(**kwargs)
+        class RightPanel(cls):
+            bl_idname = name + "_right"
+            bl_region_type = 'UI'
+            poll = poll_right
+        
+        return cls
+    
+    if cls: return AddPanels(cls, kwargs)
+    return (lambda cls: AddPanels(cls, kwargs))
 #============================================================================#
 
 
@@ -390,7 +423,6 @@ def extend_bbox(bbox, pos):
 ################################################################################################
 ################################################################################################
 ################################################################################################
-
 
 def convert_obj_rotation(src_mode, q, aa, e, dst_mode, always4=False):
     if src_mode == dst_mode: # and coordsystem is 'BASIS'
@@ -1145,7 +1177,7 @@ def get_coordsystem_manager(context=None):
 #addon.type_extend("Screen", "coordsystem_manager", (CoordSystemManagerPG | prop()))
 addon.Internal.coordsystem_manager = CoordSystemManagerPG | prop()
 
-@LeftRightPanel(idname="VIEW3D_PT_coordsystem", space_type='VIEW_3D', category="Batch", label="Coordinate System")
+@LeftRightPanel(idname="VIEW3D_PT_coordsystem", space_type='VIEW_3D', category="Transform", label="Coordinate System")
 class Panel_Coordsystem:
     def draw(self, context):
         layout = NestedLayout(self.layout)
@@ -2251,7 +2283,7 @@ def Menu_Options(self, context):
     layout.label("Apply pos/rot/scale") # TODO
     layout.label("Set geometry origin") # TODO
 
-@LeftRightPanel(idname="VIEW3D_PT_batch_{}".format(category_name_plural), space_type='VIEW_3D', category="Batch", label="Batch {}".format(Category_Name_Plural))
+@LeftRightPanel(idname="VIEW3D_PT_batch_{}".format(category_name_plural), space_type='VIEW_3D', category="Transform", label="Batch {}".format(Category_Name_Plural))
 class Panel_Category:
     def draw(self, context):
         layout = NestedLayout(self.layout)
