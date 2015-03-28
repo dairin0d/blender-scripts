@@ -24,6 +24,7 @@ import math
 import time
 import json
 import string
+import itertools
 
 import mathutils.geometry
 from mathutils import Color, Vector, Euler, Quaternion, Matrix
@@ -35,7 +36,7 @@ except ImportError:
     dairin0d_location = "."
 
 exec("""
-from {0}dairin0d.utils_math import lerp, matrix_LRS, matrix_compose, matrix_decompose, matrix_inverted_safe, orthogonal_XYZ, orthogonal
+from {0}dairin0d.utils_math import lerp, matrix_LRS, matrix_compose, matrix_decompose, matrix_inverted_safe, orthogonal_XYZ, orthogonal, matrix_flatten, matrix_unflatten
 from {0}dairin0d.utils_python import setattr_cmp, setitem_cmp, AttributeHolder, attrs_to_dict, dict_to_attrs, bools_to_int, binary_search
 from {0}dairin0d.utils_view3d import SmartView3D, Pick_Base
 from {0}dairin0d.utils_blender import Selection, MeshCache, BlUtil
@@ -70,11 +71,42 @@ del workplane_matrix
 TODO:
     * generic transform operator (in particular, for cursor, workplane, refpoints)
         * implement snap_cast (combine select, raycast and depthcast)
+        * switch absolute/relative coords (mostly useful for snapping to grid/increments, as it defines the grid origin)
+        * switch coordinate systems
+        * switch move/rotate/scale modes
+        * axis locks
+        * header display of modes/coordinates
+            * customizable precision
+        * snap to bbox/faces/edges/vertices/grid
+        * snap to raw/preview/render mesh
+        * flat or interpolated normal
+        * option to snap only to solid?
+        * snap cursor to workplane's plane (if it's visible)
+        * option to adjust cursor and view when picking workplane? (also: adjust workplane and view when picking cursor position)
+        * options to draw guides and snap elements (?)
         * moth3r asks for an operator to "pick an edge" (so that workplane's main axis will be rotated parallel to the picked edge)
         * SketchUp's 3-click workplane/coordsystem setup? see https://www.youtube.com/watch?v=Hp_iTKs7Xcc
-    * cursor/workplane/refpoint attachment
+    
+    * [DONE] cursor/workplane/refpoint attachment
+        * [DONE] option to display coordinates in attachment space or in current coordsystem
+    
     * snap/align/match commands and spatial queries
+    
     * cursor history (not so useful for workplane/refpoints, since they can be stored in scene and reverted with undo/redo)
+    
+    * make all 3d-render callbacks priority-sorted; make cursor hiding a "high-priority" view3d callback
+    
+    * CAD-like guides?
+    
+    * copy/paste to workplane? (moth3r's idea, not really sure what he meant)
+
+WARNING: in current implementation, 3D-cursor-related functions work only for the main (scene) cursor. They ignore the local-view cursor.
+
+Auto initialization (binding) of IDBlock selectors by property path? Generic new/delete operators?
+
+
+* [DONE] allow to switch to ortho mode when not aligned to workplane (at least until view is rotated)
+* [DONE] implement workplane position in current coordsystem (not rotation, because of the euler wrapping)
 
 
 make an option to navigate around workplane even if it's not visible
@@ -82,7 +114,32 @@ make an option to navigate around workplane even if it's not visible
 (also, make preference to synchronize it with workplane visibility)
 moth3r suggests to use 'PINNED' icon? or maybe put it in a menu, as it's probably a rarely-used feature
 
+low priority: remember what was the last mode before view was snapped to top/side view
+    make an option to always override blender's defaults, not just when workplane is visible
+    write it in documentation
+
 make options to turn off panels completely (for batch operations and transform tools)
+
+
+
+
+Ideas from http://blenderartists.org/forum/showthread.php?236764-Blender-as-a-CAD-Arch-viz-tool-8-)&highlight=
+1. Unit&precision control
+2. While-in-command Osnap modes (midpoint, endpoint, center, intersection, tangent, parallel, perpendicular, etc etc) w/magnet !
+4. While-in-command zoom/pan (w/mouse)
+3. User Coordinate System easy to manipulate
+5. Basic easy operations: offset, mirror, array (X,Y,Z), rotate, scale
+6. Above to be accessible also w/ reference points (see Autocad)
+7. A basic set of geometric primitives: line, poly, point
+That could be also clearly visible in eg. Sketchup.
+
+see also:
+http://blenderartists.org/forum/showthread.php?365078-User-Coordinate-Space-request-for-feedback
+http://blenderartists.org/forum/showthread.php?255662-GSOC-2012-Precision-Modelling-Tools
+http://blenderartists.org/forum/showthread.php?256295-Script-to-align-objects-to-a-face-and-line-on-that-face
+http://blenderartists.org/forum/showthread.php?326991-Transform-Orientations-typical-interaction-use-case-%28workflow-UI%29
+http://www.cad4arch.com/cadtools/
+
 
 
 
@@ -219,23 +276,23 @@ def Menu_Spatial_Queries(self, context):
 #                            < TRANSFORM TOOLS >                              #
 # =========================================================================== #
 
-def make_attach_info(entity_name, modes=None):
-    items = []
-    if (not modes) or ('WORLD' in modes): items.append(('WORLD', "World"))
-    if (not modes) or ('OBJECT' in modes): items.append(('OBJECT', "Object"))
-    if (not modes) or ('COORDSYSTEM' in modes): items.append(('COORDSYSTEM', "Coordsystem"))
-    if (not modes) or ('MANIPULATOR' in modes): items.append(('MANIPULATOR', "Manipulator"))
-    if (not modes) or ('WORKPLANE' in modes): items.append(('WORKPLANE', "Workplane"))
-    exclude_workplane = modes and ('WORKPLANE' not in modes)
+def make_attach_info(entity_name, options_keys, on_update=None, on_set=None):
+    options_items = []
+    use_cs_attach = False
+    for key in options_keys:
+        if key == 'CS_DISPLAY':
+            options_items.append(('CS_DISPLAY', "Display in current CS", "Display coordinates in current coordsystem"))
+        elif key == 'CS_ATTACH':
+            use_cs_attach = True
+            options_items.append(('CS_ATTACH', "Attach to coordsystem", "Attach to coordsystem (instead of object)"))
+        elif key == 'INHERIT':
+            options_items.append(('INHERIT', "Inherit", "Inherit attachment options"))
     
     @addon.PropertyGroup
     class AttachInfoPG:
-        mode_icons = {'WORLD':'WORLD', 'OBJECT':'OBJECT_DATA', 'COORDSYSTEM':'AXIS_TOP', 'MANIPULATOR':'MANIPUL', 'WORKPLANE':'GRID'}
-        mode = 'WORLD' | prop("Attach to", "Attach to", items=items)
-        
-        def obj_name_update(self, context):
-            if not self.obj_name: return
-            if not exclude_workplane: return
+        def check_workplane(self):
+            if not self.obj_name: return False
+            if use_cs_attach: return False
             
             is_work_name = (self.obj_name in WorkplanePG.workobj_names)
             if not is_work_name:
@@ -245,37 +302,106 @@ def make_attach_info(entity_name, modes=None):
             if is_work_name:
                 self.obj_name = ""
                 messagebox("Attaching {} to Workplane is forbidden".format(entity_name), icon='ERROR')
+            
+            return is_work_name
         
-        coordsys_name = "" | prop("Coordinate system") # if empty, then current coordsystem is used // TODO: use actual IDBlock selector?
-        obj_name = "" | prop("Object", update=obj_name_update) # if empty, then active object is used
-        bone_name = "" | prop("Bone")
+        def options_update(self, context):
+            if on_update: on_update(BlRna.parent(self), context)
+        options_base = {} | prop("Options", "Options", items=options_items, update=options_update)
+        
+        def coordsys_name_update(self, context):
+            if on_update: on_update(BlRna.parent(self), context)
+        coordsys_name_base = "" | prop("Coordinate system", update=coordsys_name_update) # TODO: use actual IDBlock selector?
+        
+        def obj_name_update(self, context):
+            if self.check_workplane(): return
+            if on_update: on_update(BlRna.parent(self), context)
+        obj_name_base = "" | prop("Object", update=obj_name_update)
+        
+        def bone_name_update(self, context):
+            if on_update: on_update(BlRna.parent(self), context)
+        bone_name_base = "" | prop("Bone", update=bone_name_update)
+        
+        def _get(self):
+            return BlRna.enum_to_int(self, "options_base")
+        def _set(self, value):
+            if on_set: on_set(BlRna.parent(self))
+            self.options_base = BlRna.enum_from_int(self, "options_base", value)
+        options = {} | prop("Options", "Options", items=options_items, get=_get, set=_set)
+        
+        def _get(self):
+            return self.coordsys_name_base
+        def _set(self, value):
+            if on_set: on_set(BlRna.parent(self))
+            self.coordsys_name_base = value
+        coordsys_name = "" | prop("Coordinate system", get=_get, set=_set)
+        
+        def _get(self):
+            return self.obj_name_base
+        def _set(self, value):
+            if on_set: on_set(BlRna.parent(self))
+            self.obj_name_base = value
+        obj_name = "" | prop("Object", get=_get, set=_set)
+        
+        def _get(self):
+            return self.bone_name_base
+        def _set(self, value):
+            if on_set: on_set(BlRna.parent(self))
+            self.bone_name_base = value
+        bone_name = "" | prop("Bone", get=_get, set=_set)
+        
+        matrix_array = Matrix() | prop()
+        def _get(self):
+            return self.matrix_array # returns Matrix
+        def _set(self, value):
+            self.matrix_array = matrix_flatten(value) # requires linear array
+        matrix = property(_get, _set)
+        matrix_exists = False | prop()
         
         def copy(self, template):
-            self.mode = template.mode
+            self.options = template.options
             self.coordsys_name = template.coordsys_name
             self.obj_name = template.obj_name
             self.bone_name = template.bone_name
         
-        def draw(self, layout):
-            with layout.row(True):
-                scale_x = 0.16
-                with layout.row(True)(scale_x=scale_x):
-                    icon = self.mode_icons[self.mode]
-                    layout.prop(self, "mode", text="", icon=icon)
+        def calc_matrix(self, context=None):
+            if context is None: context = bpy.context
+            if 'CS_ATTACH' in self.options:
+                manager = get_coordsystem_manager(context)
+                coordsys = manager.coordsystems.get(self.coordsys_name)
+                return (bool(coordsys), CoordSystemMatrix(coordsys, context=context).final_matrix())
+            else:
+                obj = bpy.data.objects.get(self.obj_name)
+                return (bool(obj), BlUtil.Object.matrix_world(obj, self.bone_name))
+        
+        def draw(self, layout, inherit=False, parent=None):
+            if inherit and parent:
+                attach_info = parent
+            else:
+                attach_info = self
+            
+            with layout.row(True)(active=not inherit):
+                cs_attach = ('CS_ATTACH' in attach_info.options)
+                cs_display = ('CS_DISPLAY' in attach_info.options)
                 
-                if self.mode == 'OBJECT':
-                    obj = bpy.data.objects.get(self.obj_name)
-                    with layout.row(True)(alert=bool(self.obj_name and not obj)):
-                        layout.prop(self, "obj_name", text="")
-                    
-                    if obj and (obj.type == 'ARMATURE'):
-                        bone = (obj.data.edit_bones if (obj.mode == 'EDIT') else obj.data.bones).get(self.bone_name)
-                        with layout.row(True)(alert=bool(self.bone_name and not bone)):
-                            layout.prop(self, "bone_name", text="")
-                elif self.mode == 'COORDSYSTEM':
-                    layout.prop(self, "coordsys_name", text="")
+                if cs_attach:
+                    icon = ('OUTLINER_DATA_EMPTY' if cs_display else 'MANIPUL') # or 'OUTLINER_OB_EMPTY'
                 else:
-                    layout.row(True)(enabled=False).prop(self, "obj_name", text="")
+                    icon = ('MESH_CUBE' if cs_display else 'OBJECT_DATA')
+                layout.prop_menu_enum(self, "options", text="", icon=icon) # this is always the self
+                
+                with layout.row(True)(enabled=not inherit):
+                    if cs_attach:
+                        layout.prop(attach_info, "coordsys_name", text="")
+                    else:
+                        obj = bpy.data.objects.get(attach_info.obj_name)
+                        with layout.row(True)(alert=bool(attach_info.obj_name and not obj)):
+                            layout.prop(attach_info, "obj_name", text="")
+                        
+                        if obj and (obj.type == 'ARMATURE'):
+                            bone = (obj.data.edit_bones if (obj.mode == 'EDIT') else obj.data.bones).get(self.bone_name)
+                            with layout.row(True)(alert=bool(attach_info.bone_name and not bone)):
+                                layout.prop(attach_info, "bone_name", text="")
     
     return AttachInfoPG | prop()
 
@@ -456,7 +582,15 @@ class WorkplanePG:
     
     # ==================================================================== #
     
-    attach_info = make_attach_info("Workplane", {'WORLD', 'OBJECT'})
+    def on_attach_update(self, context):
+        old_exists, old_matrix = self.attach_info.matrix_exists, self.attach_info.matrix
+        new_exists, new_matrix = self.attach_info.calc_matrix()
+        if (new_matrix == old_matrix): return
+        xyzt = self.plane_xyzt
+        self.attach_info.matrix = new_matrix
+        self.attach_info.matrix_exists = new_exists
+        self.plane_xyzt = xyzt
+    attach_info = make_attach_info("Workplane", ['CS_DISPLAY'], on_attach_update)
     
     def _get(self):
         userprefs = bpy.context.user_preferences
@@ -467,6 +601,8 @@ class WorkplanePG:
     use_world = True | prop("Align new objects to world or to view", get=_get, set=_set)
     
     forced_view_alignment = False
+    prev_region = None
+    prev_region_rot = None
     
     def _update_snap(self, context):
         if self.snap_any:
@@ -489,30 +625,46 @@ class WorkplanePG:
     polar_subdivs = 8 | prop("Number of snapping angles", min=3, max=500, update=_update_params)
     limit = 0 | prop("Size limit", min=0, max=100, update=_update_params)
     
+    # ===== plane_xyzt ===== #
     plane_x = Vector((1,0,0)) | prop()
     plane_y = Vector((0,1,0)) | prop()
     plane_z = Vector((0,0,1)) | prop()
     plane_t = Vector((0,0,0)) | prop()
     
+    @staticmethod
+    def transform_plane(m, x, y, z, t):
+        p0 = Vector(t)
+        px = p0 + Vector(x)
+        py = p0 + Vector(y)
+        pz = p0 + Vector(z)
+        
+        p0 = m * p0
+        px = m * px
+        py = m * py
+        pz = m * pz
+        
+        t = p0
+        y = (py - p0).normalized()
+        z = (px - p0).cross(y).normalized()
+        x = y.cross(z)
+        
+        return (x, y, z, t)
+    
     def _get(self):
-        return (Vector(self.plane_x).normalized(),
-                Vector(self.plane_y).normalized(),
-                Vector(self.plane_z).normalized(),
-                Vector(self.plane_t))
+        m = self.attach_info.matrix
+        return self.transform_plane(m, self.plane_x, self.plane_y, self.plane_z, self.plane_t)
     def _set(self, xyzt):
-        self.plane_x = Vector(xyzt[0]).normalized()
-        self.plane_y = Vector(xyzt[1]).normalized()
-        self.plane_z = Vector(xyzt[2]).normalized()
-        self.plane_t = Vector(xyzt[3])
+        m = matrix_inverted_safe(self.attach_info.matrix)
+        self.plane_x, self.plane_y, self.plane_z, self.plane_t = self.transform_plane(m, *xyzt)
         self.plane_rot_cache_from_xyz()
         self.align_to_view(True)
-    plane_xyzt = property(_get, _set)
+    plane_xyzt = property(_get, _set) # global
     
     def _get(self):
         return matrix_compose(*self.plane_xyzt)
     def _set(self, value):
         self.plane_xyzt = matrix_decompose(value)
-    matrix = property(_get, _set)
+    matrix = property(_get, _set) # global
     
     def _get(self):
         m = self.matrix
@@ -520,14 +672,31 @@ class WorkplanePG:
         m.col[1] *= self.scale
         m.col[2] *= self.scale
         return m
-    matrix_scaled = property(_get)
+    matrix_scaled = property(_get) # global
     
+    _csm_matrix = None
     def _get(self):
-        return self.plane_t
+        if ('CS_DISPLAY' in self.attach_info.options):
+            m = CoordSystemMatrix.current().final_matrix()
+            world_t = self.attach_info.matrix * self.plane_t
+            return matrix_inverted_safe(m) * world_t
+        else:
+            return self.plane_t
     def _set(self, value):
-        self.plane_t = value
+        if ('CS_DISPLAY' in self.attach_info.options):
+            cls = self.__class__
+            if not UIMonitor.user_interaction:
+                UIMonitor.user_interaction = True
+                m = CoordSystemMatrix.current().final_matrix()
+                cls._csm_matrix = m
+            else:
+                m = cls._csm_matrix or Matrix()
+            world_t = m * Vector(value)
+            self.plane_t = matrix_inverted_safe(self.attach_info.matrix) * world_t
+        else:
+            self.plane_t = Vector(value)
         self.align_to_view(True)
-    plane_pos = Vector() | prop(get=_get, set=_set)
+    plane_pos = Vector() | prop(get=_get, set=_set, subtype='TRANSLATION', unit='LENGTH') # local/display
     
     def plane_rot_cache_from_xyz(self):
         m = matrix_compose(self.plane_x, -self.plane_z, self.plane_y)
@@ -540,14 +709,15 @@ class WorkplanePG:
         m = value.to_matrix()
         self.plane_x, self.plane_y, self.plane_z = m.col[0], m.col[2], -m.col[1]
         self.align_to_view(True)
-    plane_rot_cache = Vector() | prop()
+    plane_rot_cache = Vector() | prop() # local/display ?
     
     def _get(self):
         return Euler(self.plane_rot_cache)
     def _set(self, value):
         self.plane_rot_cache = Vector(value)
         self.plane_rot_cache_to_xyz()
-    plane_rot = Euler() | prop(get=_get, set=_set)
+    plane_rot = Euler() | prop(get=_get, set=_set) # local/display ?
+    # ====================== #
     
     matrices_initialized = False | prop()
     last_axis_choice = 0 | prop()
@@ -747,10 +917,12 @@ class WorkplanePG:
     del draw_view
     
     def calc_aligned_xyzt(self, view_dir):
-        origin = self.plane_t
-        dir_x = self.plane_x.normalized()
-        dir_y = self.plane_y.normalized()
-        dir_z = self.plane_z.normalized()
+        xyzt = self.plane_xyzt
+        
+        origin = xyzt[3]
+        dir_x = xyzt[0]
+        dir_y = xyzt[1]
+        dir_z = xyzt[2]
         dot_x = abs(view_dir.dot(dir_x))
         dot_y = abs(view_dir.dot(dir_y))
         dot_z = abs(view_dir.dot(dir_z))
@@ -830,10 +1002,13 @@ class WorkplanePG:
         
         if force or (max_idist != self.max_idist):
             self.max_idist = max_idist
+            scale = worksurf_scale
             worksurf_obj = self.work_obj_get(self.worksurf_name)
             if worksurf_obj:
-                scale = worksurf_scale
                 worksurf_obj.matrix_world = matrix_compose(dir_x*scale, dir_y*scale, dir_z*scale, origin)
+            workpolar_obj = self.work_obj_get(self.workpolar_name)
+            if workpolar_obj:
+                workpolar_obj.matrix_world = worksurf_obj.matrix_world # manually update to avoid 1-frame lag
         
         if force or (view_ixy != tuple(self.view_ixy)):
             self.view_ixy = view_ixy
@@ -853,24 +1028,46 @@ class WorkplanePG:
         sv = SmartView3D(**rv3d_context)
         if not sv: return
         
-        if self.forced_view_alignment:
+        cls = WorkplanePG
+        
+        region = hash(sv.region) # just for comparison
+        region_rot = sv.forward # just for comparison
+        
+        if cls.forced_view_alignment:
+            cls.prev_region = None
+            cls.prev_region_rot = None
             is_aligned = True
         else:
+            if cls.prev_region != region:
+                cls.prev_region = region
+                cls.prev_region_rot = None
+            
+            rotated = False
+            if region_rot != cls.prev_region_rot:
+                if cls.prev_region_rot: rotated = True
+                cls.prev_region_rot = region_rot
+            
+            """
             epsilon = 1e-5
+            
+            xyzt = self.plane_xyzt
             
             dot_min = 1.0
             for view_dir in (sv.forward, sv.up):
-                dot_x = abs(self.plane_x.dot(view_dir))
-                dot_y = abs(self.plane_y.dot(view_dir))
-                dot_z = abs(self.plane_z.dot(view_dir))
+                dot_x = abs(xyzt[0].dot(view_dir))
+                dot_y = abs(xyzt[1].dot(view_dir))
+                dot_z = abs(xyzt[2].dot(view_dir))
                 dot_max = max(dot_x, dot_y, dot_z)
                 dot_min = min(dot_min, dot_max)
             
             is_aligned = (abs(1 - dot_min) < epsilon)
+            """
+            
+            is_aligned = not rotated
         
         is_unaligned = not is_aligned
         
-        if (not self.forced_view_alignment) and is_aligned: return # don't switch back
+        if (not cls.forced_view_alignment) and is_aligned: return # don't switch back
         
         prefs = bpy.context.user_preferences
         if prefs.view.use_auto_perspective:
@@ -881,7 +1078,24 @@ class WorkplanePG:
             if is_unaligned != self.use_world:
                 self.use_world = is_unaligned
     
+    def update_attachment_matrix(self):
+        old_exists, old_matrix = self.attach_info.matrix_exists, self.attach_info.matrix
+        new_exists, new_matrix = self.attach_info.calc_matrix()
+        if (new_matrix == old_matrix): return
+        
+        if new_exists == old_exists:
+            self.attach_info.matrix = new_matrix
+            self.attach_info.matrix_exists = new_exists
+            self.align_to_view(True)
+        else:
+            xyzt = self.plane_xyzt
+            self.attach_info.matrix = new_matrix
+            self.attach_info.matrix_exists = new_exists
+            self.plane_xyzt = xyzt
+    
     def on_scene_update(self):
+        self.update_attachment_matrix()
+        
         if self.snap_any:
             self.ensure_workplane_objs(True)
             self.detect_view_alignment()
@@ -893,7 +1107,6 @@ class WorkplanePG:
         self.block_navigation_operators(False)
     
     def on_ui_monitor(self, context, event):
-        #self.detect_view_alignment()
         pass
 
 @addon.Operator(idname="view3d.pick_workplane", options={'BLOCKING'}, description=
@@ -907,6 +1120,9 @@ class Operator_Pick_Workplane:
         self.snap_to_cartesian = workplane.snap_to_cartesian
         self.snap_to_polar = workplane.snap_to_polar
         if not workplane.snap_any: workplane.snap_to_cartesian = True
+        
+        self.obj_name = workplane.attach_info.obj_name
+        self.attach_matrix = workplane.attach_info.matrix
         
         work_objs = set(workplane.get_workplane_objs())
         
@@ -941,7 +1157,21 @@ class Operator_Pick_Workplane:
             
             if result and (result[2] >= 0):
                 m = obj.matrix_world
-                return (True, obj, m, m * result[0], m.to_3x3() * result[1])
+                
+                p0 = result[0]
+                n0 = result[1]
+                
+                p = m * p0
+                
+                x, y, z = orthogonal_XYZ(None, None, n0)
+                px = m * (p0 + x)
+                py = m * (p0 + y)
+                x = px - p
+                y = py - p
+                n = x.cross(y)
+                n.normalize()
+                
+                return (True, obj, m, p, n)
         
         return (False, None, Matrix(), Vector(), Vector())
     
@@ -962,10 +1192,11 @@ class Operator_Pick_Workplane:
             if raycast_result[0] and depthcast_result[0]:
                 rl = (raycast_result[-2] - ray[0]).magnitude
                 dl = (depthcast_result[-2] - ray[0]).magnitude
-                ml = max(rl, dl)
                 epsilon = 1e-2
-                if (not ((ml < epsilon) or (abs((rl - dl)/ml) < epsilon))) or (dl < rl):
-                    raycast_result = depthcast_result
+                if (rl - dl) > rl*epsilon: raycast_result = depthcast_result
+                #if raycast_result[4].magnitude < 0.5:
+                #    raycast_result = list(raycast_result)
+                #    raycast_result[4] = depthcast_result[4]
             elif depthcast_result[0]:
                 raycast_result = depthcast_result
         
@@ -975,14 +1206,18 @@ class Operator_Pick_Workplane:
         if raycast_result and raycast_result[0]:
             x, y, z = orthogonal_XYZ(None, None, raycast_result[4], "z")
             t = raycast_result[3]
+            obj = raycast_result[1]
+            workplane.attach_info.obj_name = (obj.name if obj else "")
             workplane.plane_xyzt = (x, y, z, t)
         
         if cancel or confirm:
             if cancel:
-                workplane.plane_xyzt = self.xyzt
                 workplane.snap_to_plane = self.snap_to_plane
                 workplane.snap_to_cartesian = self.snap_to_cartesian
                 workplane.snap_to_polar = self.snap_to_polar
+                workplane.attach_info.obj_name = self.obj_name
+                workplane.attach_info.matrix = self.attach_matrix
+                workplane.plane_xyzt = self.xyzt
             workplane.swap_axes = self.swap_axes
             #context.window.cursor_modal_restore()
             return ({'FINISHED'} if confirm else {'CANCELLED'})
@@ -994,11 +1229,11 @@ def Operator_Snap_Cursor_Workplane(self, context, event):
     tfm_tools = get_transform_tools(context)
     workplane = tfm_tools.workplane
     
+    xyzt = workplane.plane_xyzt
     if event and event.ctrl:
-        workplane.plane_t = BlUtil.Scene.cursor(context)
-        workplane.align_to_view(True)
+        workplane.plane_xyzt = (xyzt[0], xyzt[1], xyzt[2], BlUtil.Scene.cursor(context))
     else:
-        BlUtil.Scene.cursor_set(context, workplane.plane_t)
+        BlUtil.Scene.cursor_set(context, xyzt[3])
 
 @addon.Operator(idname="view3d.align_objects_to_workplane", options={'REGISTER', 'UNDO'}, description=
 "Click: align object(s) to workplane", mode='OBJECT')
@@ -1139,9 +1374,9 @@ class Operator_Orbit_Around_Workplane:
         self.sv.use_camera_axes = True
         
         if self.mode == 'ORBITLEFT':
-            axis = -workplane.plane_z
+            axis = -workplane.plane_xyzt[2]
         elif self.mode == 'ORBITRIGHT':
-            axis = workplane.plane_z
+            axis = workplane.plane_xyzt[2]
         if self.mode == 'ORBITUP':
             axis = self.sv.left # this is how built-in operator works
         elif self.mode == 'ORBITDOWN':
@@ -1177,6 +1412,8 @@ class Operator_Align_View_To_Workplane:
         def m2xyz(m):
             return m.col[0].to_3d().normalized(), m.col[1].to_3d().normalized(), m.col[2].to_3d().normalized()
         
+        xyzt = workplane.plane_xyzt
+        
         if self.mode == 'CLOSEST':
             m = Matrix(workplane_obj.matrix_world)
             m_x, m_y, m_z = m2xyz(m)
@@ -1191,29 +1428,29 @@ class Operator_Align_View_To_Workplane:
                 goal_y = m_y * (-1.0 if dot_y < 0 else 1.0)
             goal_x = goal_y.cross(goal_z)
         elif self.mode == 'TOP':
-            goal_x = workplane.plane_x
-            goal_y = workplane.plane_y
-            goal_z = workplane.plane_z
+            goal_x = xyzt[0]
+            goal_y = xyzt[1]
+            goal_z = xyzt[2]
         elif self.mode == 'BOTTOM':
-            goal_x = workplane.plane_x
-            goal_y = -workplane.plane_y
-            goal_z = -workplane.plane_z
+            goal_x = xyzt[0]
+            goal_y = -xyzt[1]
+            goal_z = -xyzt[2]
         elif self.mode == 'FRONT':
-            goal_x = workplane.plane_x
-            goal_y = workplane.plane_z
-            goal_z = -workplane.plane_y
+            goal_x = xyzt[0]
+            goal_y = xyzt[2]
+            goal_z = -xyzt[1]
         elif self.mode == 'BACK':
-            goal_x = -workplane.plane_x
-            goal_y = workplane.plane_z
-            goal_z = workplane.plane_y
+            goal_x = -xyzt[0]
+            goal_y = xyzt[2]
+            goal_z = xyzt[1]
         elif self.mode == 'RIGHT':
-            goal_x = workplane.plane_y
-            goal_y = workplane.plane_z
-            goal_z = workplane.plane_x
+            goal_x = xyzt[1]
+            goal_y = xyzt[2]
+            goal_z = xyzt[0]
         elif self.mode == 'LEFT':
-            goal_x = -workplane.plane_y
-            goal_y = workplane.plane_z
-            goal_z = -workplane.plane_x
+            goal_x = -xyzt[1]
+            goal_y = xyzt[2]
+            goal_z = -xyzt[0]
         
         if prefs.view.use_auto_perspective:
             self.sv.is_perspective = False
@@ -1223,7 +1460,7 @@ class Operator_Align_View_To_Workplane:
         
         if self.use_viewpoint:
             pivot = self.sv.viewpoint
-            distance = goal_z.dot(pivot - workplane.plane_t)
+            distance = goal_z.dot(pivot - xyzt[3])
             clamped_distance = max(distance, self.sv.clip_start*2)
             
             self.pivot = pivot
@@ -1232,7 +1469,7 @@ class Operator_Align_View_To_Workplane:
             self.sv.viewpoint = pivot # restore the viewpoint
         else:
             pivot = self.sv.focus
-            distance = goal_z.dot(pivot - workplane.plane_t)
+            distance = goal_z.dot(pivot - xyzt[3])
             
             self.pivot = pivot
             self.pivot1 = pivot - goal_z*distance
@@ -1362,10 +1599,6 @@ class Operator_BBox_Transform:
         self.pm = matrix_compose(self.dir_x, self.dir_y, self.dir_z, self.origin)
         self.pm_inv = matrix_inverted_safe(self.pm)
         
-        v3d = context.space_data
-        self.cursor_pos = Vector(v3d.cursor_location)
-        v3d.cursor_location = self.getpoint(Vector((0.5, 0.5, 0.5)))
-        
         self.reaction_distance = 5.0
         self.search_result = (0,0,0)
         self.line_proj = None
@@ -1409,10 +1642,14 @@ class Operator_BBox_Transform:
                 if space.type != 'VIEW_3D': continue
                 v3d_spaces[space] = dict(
                     show_manipulator = space.show_manipulator,
+                    cursor_location = Vector(space.cursor_location), # e.g. if it's in the Local View mode
                 )
                 space.show_manipulator = False
         self.v3d_spaces = v3d_spaces
         self.v3d_regions = v3d_regions
+        
+        v3d = context.space_data
+        v3d.cursor_location = self.getpoint(Vector((0.5, 0.5, 0.5)))
         
         UIMonitor.update(context, event)
         self.update_sv(event)
@@ -1444,9 +1681,6 @@ class Operator_BBox_Transform:
             self.tag_redraw()
         
         if cancel or confirm:
-            new_cursor_location = self.getpoint(cp)
-            old_cursor_location = Vector(self.cursor_pos)
-            
             addon.remove_matches(owner=self)
             self.restore_states()
             self.tag_redraw()
@@ -1459,6 +1693,11 @@ class Operator_BBox_Transform:
                     # TODO: instead of standard pie menu, draw a custom one?
                     # (when a menu is invoked, this operator ends, which means bbox is no longer rendered)
                     
+                    old_cursor_location = self.v3d_spaces[v3d]["cursor_location"]
+                    
+                    cp = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
+                    new_cursor_location = self.getpoint(cp)
+                    
                     """
                     old_pivot_point = v3d.pivot_point
                     def restore_pivot(*args):
@@ -1466,12 +1705,9 @@ class Operator_BBox_Transform:
                         v3d.pivot_point = old_pivot_point
                     UIMonitor.on_next_update.append(restore_pivot)
                     
-                    cp = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
                     v3d.cursor_location = new_cursor_location
                     v3d.pivot_point = 'CURSOR'
                     """
-                    
-                    cp = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
                     
                     bbox_exec = Operator_BBox_Transform_Execute
                     bbox_exec.constraint_axis = tuple((s != 0) for s in self.search_result)
@@ -1501,9 +1737,8 @@ class Operator_BBox_Transform:
             else:
                 if self.sv:
                     v3d = self.sv.space_data
+                    old_cursor_location = self.v3d_spaces[v3d]["cursor_location"]
                     v3d.cursor_location = old_cursor_location
-                else:
-                    context.scene.cursor_location = old_cursor_location
                 
                 result = ({'CANCELLED', 'PASS_THROUGH'} if pass_through else {'CANCELLED'})
             
@@ -1572,7 +1807,7 @@ class Operator_BBox_Transform:
             # make sure we deal with the "visible" part of the line
             plane_near = sv.z_plane(0)
             p_near = mathutils.geometry.intersect_line_plane(p0_abs, p1_abs, plane_near[0], plane_near[1])
-            if p_near:
+            if p_near: # TODO: sv.clip(line/polygon) - returns clipped line/polygon ?
                 pd_abs = p1_abs - p0_abs
                 t = ((p_near - p0_abs).normalized()).dot(pd_abs.normalized())
                 if (t >= 0) and (t <= 1):
@@ -1593,9 +1828,6 @@ class Operator_BBox_Transform:
         self.search_result = best_n
     
     def draw_view(self):
-        #self.modelview_matrix = cgl.Matrix_ModelView
-        #self.projection_matrix = cgl.Matrix_Projection
-        
         prefs = addon.preferences
         c_WP = prefs.workplane_color
         c_LS = prefs.workplane_lines10_color
@@ -1636,11 +1868,6 @@ class Operator_BBox_Transform:
         
         if bpy.context.region != sv.region: return
         
-        #modelview_matrix = cgl.Matrix_ModelView
-        #projection_matrix = cgl.Matrix_Projection
-        
-        #cgl.Matrix_ModelView = self.modelview_matrix
-        #cgl.Matrix_Projection = self.projection_matrix
         cgl.Matrix_ModelView = cgl.Matrix_ModelView_3D
         cgl.Matrix_Projection = cgl.Matrix_Projection_3D
         
@@ -1669,8 +1896,6 @@ class Operator_BBox_Transform:
                 with cgl.batch('LINES') as batch:
                     drawline(batch, p0, p1)
         
-        #cgl.Matrix_ModelView = modelview_matrix
-        #cgl.Matrix_Projection = projection_matrix
         cgl.Matrix_ModelView = cgl.Matrix_ModelView_2D
         cgl.Matrix_Projection = cgl.Matrix_Projection_2D
         
@@ -1703,27 +1928,76 @@ class Operator_BBox_Transform:
 
 @addon.PropertyGroup
 class CursorPG:
+    def on_attach_update(self, context):
+        old_exists, old_matrix = self.attach_info.matrix_exists, self.attach_info.matrix
+        new_exists, new_matrix = self.attach_info.calc_matrix()
+        if (new_matrix == old_matrix): return
+        location_world = self.location_world
+        self.attach_info.matrix = new_matrix
+        self.attach_info.matrix_exists = new_exists
+        self.location_world = location_world
+    attach_info = make_attach_info("Cursor", ['CS_DISPLAY'], on_attach_update)
+    
+    attach_location = Vector() | prop()
+    
+    last_world_pos = Vector((float("nan"), float("nan"), float("nan"))) | prop()
+    
+    def location_get(self, context, world):
+        attachment_exists, attachment_matrix = self.attach_info.matrix_exists, self.attach_info.matrix
+        if attachment_exists and (not world):
+            return Vector(self.attach_location)
+        else:
+            return BlUtil.Scene.cursor(context)
+    
+    def location_set(self, context, world, value):
+        value = Vector(value)
+        attachment_exists, attachment_matrix = self.attach_info.matrix_exists, self.attach_info.matrix
+        if attachment_exists and (not world):
+            self.last_world_pos = attachment_matrix * value
+            self.attach_location = value
+            BlUtil.Scene.cursor_set(context, self.last_world_pos, False)
+        else:
+            self.last_world_pos = value
+            BlUtil.Scene.cursor_set(context, value, False)
+            self.attach_location = matrix_inverted_safe(attachment_matrix) * value
+    
+    def _get(self):
+        return self.location_get(bpy.context, True)
+    def _set(self, value):
+        self.location_set(bpy.context, True, value)
+    location_world = property(_get, _set)
+    
+    def _get(self):
+        return self.location_get(bpy.context, False)
+    def _set(self, value):
+        self.location_set(bpy.context, False, value)
+    location_local = property(_get, _set)
+    
     _csm_matrix = None
     def _get(self):
-        context = bpy.context
-        m = CoordSystemMatrix.current(context).final_matrix()
-        cursor_pos = BlUtil.Scene.cursor(context)
-        return matrix_inverted_safe(m) * cursor_pos
-    def _set(self, value):
-        context = bpy.context
-        if not UIMonitor.user_interaction:
-            UIMonitor.user_interaction = True
-            m = CoordSystemMatrix.current(context).final_matrix()
-            CursorPG._csm_matrix = m
+        if ('CS_DISPLAY' in self.attach_info.options):
+            m = CoordSystemMatrix.current().final_matrix()
+            return matrix_inverted_safe(m) * self.location_world
         else:
-            m = CursorPG._csm_matrix or Matrix()
-        BlUtil.Scene.cursor_set(context, m * Vector(value))
-    location = Vector() | prop(get=_get, set=_set, subtype='TRANSLATION', unit='LENGTH', precision=4)
+            return self.location_local
+    def _set(self, value):
+        if ('CS_DISPLAY' in self.attach_info.options):
+            cls = self.__class__
+            if not UIMonitor.user_interaction:
+                UIMonitor.user_interaction = True
+                m = CoordSystemMatrix.current().final_matrix()
+                cls._csm_matrix = m
+            else:
+                m = cls._csm_matrix or Matrix()
+            self.location_world = m * Vector(value)
+        else:
+            self.location_local = Vector(value)
+    location = Vector() | prop(get=_get, set=_set, subtype='TRANSLATION', unit='LENGTH', precision=4) # local / display
+    
+    history = 0 | prop()
     
     visible = True | prop("WARNING: while cursor is \"invisible\", Blender will endlessly redraw the UI") # or maybe make it an enum? (each method of hiding has its drawbacks)
     hide_method = 'OVERDRAW' | prop(items=[('OVERDRAW', "Overdraw"), ('DISPLACE', "Displace")])
-    
-    attach_info = make_attach_info("Cursor", {'WORLD', 'OBJECT'})
     
     def draw(self, layout):
         title = "3D Cursor"
@@ -1783,6 +2057,30 @@ class CursorPG:
             v3d.cursor_location = CursorPG.cursor_save_location
     
     del draw_px
+    
+    def update_attachment_matrix(self):
+        old_exists, old_matrix = self.attach_info.matrix_exists, self.attach_info.matrix
+        new_exists, new_matrix = self.attach_info.calc_matrix()
+        
+        matrix_changed = (new_matrix != old_matrix) or addons_registry.undo_detected
+        
+        if not matrix_changed:
+            world_pos = BlUtil.Scene.cursor(bpy.context)
+            if self.last_world_pos != world_pos: self.location_world = world_pos
+        else:
+            if new_exists == old_exists:
+                location_local = self.location_local
+                self.attach_info.matrix = new_matrix
+                self.attach_info.matrix_exists = new_exists
+                self.location_local = location_local
+            else:
+                location_world = self.location_world
+                self.attach_info.matrix = new_matrix
+                self.attach_info.matrix_exists = new_exists
+                self.location_world = location_world
+    
+    def on_scene_update(self):
+        self.update_attachment_matrix()
 
 @addon.Operator(idname="view3d.transform_tools_cursor_menu", options={'INTERNAL'}, description=
 "Click: Cursor3D menu")
@@ -1793,6 +2091,8 @@ def Operator_Cursor_Menu(self, context, event):
         cursor = tfm_tools.cursor
         
         layout = NestedLayout(self.layout)
+        
+        layout.prop(cursor, "history")
         
         #layout.prop(cursor, "hide_method")
         #layout.prop_menu_enum(cursor, "hide_method", text="Hiding method")
@@ -1839,37 +2139,93 @@ class RefpointPG:
                 cluster.remove_point(self)
         else:
             if value: refpoints.active_id = (cluster.id, self.id)
+        tag_redraw()
         RefpointPG._lock = False
     is_active = False | prop("Click: make active, Shift+Click: copy as sub-point, Shift+Ctrl+Click: copy as new point, Ctrl+Click: delete (sub-)point", get=_get, set=_set)
     
-    inherit = True
-    attach_info = make_attach_info("Reference point")
-    offset = Vector() | prop()
+    def on_attach_set(self):
+        RefpointPG._location_world_save = self.location_world
+    def on_attach_update(self, context):
+        self.location_world = RefpointPG._location_world_save
+    attach_info = make_attach_info("Reference point", ['CS_DISPLAY', 'CS_ATTACH', 'INHERIT'], on_attach_update, on_attach_set)
+    
+    attach_info_inherited = property(lambda self: (BlRna.parent(self).points[0] if self.inherit else self).attach_info)
     
     def _get(self):
-        # TODO: implement attachment
-        if self.id == 0: return Vector(self.offset)
-        cluster = BlRna.parent(self)
-        return cluster.points[0].world_pos + self.offset
-    world_pos = property(_get)
+        return (self.id != 0) and ('INHERIT' in self.attach_info.options)
+    def _set(self, value):
+        options = self.attach_info.options
+        self.attach_info.options = ((options | {'INHERIT'}) if value else (options - {'INHERIT'}))
+    inherit = property(_get, _set)
+    
+    def _get(self):
+        if self.id == 0:
+            attachment_exists, attachment_matrix = self.attach_info.calc_matrix()
+            return attachment_matrix * self.location_local
+        else:
+            point0 = BlRna.parent(self).points[0]
+            if ('INHERIT' in self.attach_info.options):
+                attachment_exists, attachment_matrix = point0.attach_info.calc_matrix()
+            else:
+                attachment_exists, attachment_matrix = self.attach_info.calc_matrix()
+            return point0.location_world + attachment_matrix.to_3x3() * self.location_local
+    def _set(self, value):
+        if self.id == 0:
+            attachment_exists, attachment_matrix = self.attach_info.calc_matrix()
+            self.location_local = matrix_inverted_safe(attachment_matrix) * Vector(value)
+        else:
+            point0 = BlRna.parent(self).points[0]
+            if ('INHERIT' in self.attach_info.options):
+                attachment_exists, attachment_matrix = point0.attach_info.calc_matrix()
+            else:
+                attachment_exists, attachment_matrix = self.attach_info.calc_matrix()
+            value = Vector(value) - point0.location_world
+            self.location_local = matrix_inverted_safe(attachment_matrix.to_3x3()) * value
+    location_world = property(_get, _set)
+    
+    location_local = Vector() | prop(update=True) # make sure view is redrawn when location is updated
+    
+    _csm_matrix = None
+    def _get(self):
+        if ('CS_DISPLAY' in self.attach_info_inherited.options):
+            m = CoordSystemMatrix.current().final_matrix()
+            return matrix_inverted_safe(m) * self.location_world
+        else:
+            return self.location_local
+    def _set(self, value):
+        if ('CS_DISPLAY' in self.attach_info_inherited.options):
+            cls = self.__class__
+            if not UIMonitor.user_interaction:
+                UIMonitor.user_interaction = True
+                m = CoordSystemMatrix.current().final_matrix()
+                cls._csm_matrix = m
+            else:
+                m = cls._csm_matrix or Matrix()
+            self.location_world = m * Vector(value)
+        else:
+            self.location_local = Vector(value)
+    location = Vector() | prop(get=_get, set=_set, subtype='TRANSLATION', unit='LENGTH', precision=4) # local / display
     
     def init(self, id, template=None):
         self.id = id
         self.name = RefpointsPG.index_to_name((BlRna.parent(self).id, self.id))
         if template:
-            self.inherit = template.inherit
             self.attach_info.copy(template.attach_info)
             if (self.id == 0) == (template.id == 0):
-                self.offset = template.offset # TODO: implement conversions between coordsystems
+                self.location_local = template.location_local
+            else:
+                self.location_world = template.location_world
+        else:
+            self.inherit = True
         self.is_active = True
     
     def draw(self, layout):
         with layout.column(True):
             with layout.row(True):
-                self.attach_info.draw(layout)
+                self.attach_info.draw(layout, self.inherit, self.attach_info_inherited)
                 layout.operator("view3d.transform_tools_raycast", text="", icon='SNAP_NORMAL')
             
-            layout.prop(self, "offset", text="")
+            layout.prop(self, "location", text="")
 
 @addon.PropertyGroup
 class RefpointClusterPG:
@@ -1914,44 +2270,23 @@ class RefpointClusterPG:
                 for point in self.points:
                     layout.row(True)(scale_x=0.1).prop(point, "is_active", text=point.name, toggle=True)
     
-    def draw_lines(self, sv):
+    def collect_lines(self, sv, res_lines):
         point0 = self.points[0]
-        p0_abs = point0.world_pos
-        
-        cgl.Color = (0.0, 0.0, 0.0, 0.75)
-        with cgl(LineWidth=1, DepthMask=0, DEPTH_TEST=False, BLEND=True, LINE_STIPPLE=True):
-            with cgl.batch('LINES') as batch:
-                for point in self.points:
-                    if point.id == 0: continue
-                    p_abs = point.world_pos
-                    batch.vertex(*p0_abs)
-                    batch.vertex(*p_abs)
+        p0_abs = point0.location_world
+        for point in self.points:
+            if point.id == 0: continue
+            p_abs = point.location_world
+            res_lines.append((p0_abs, p_abs))
     
-    def draw_points(self, sv): # TODO: sort by Z?
-        refpoints = BlRna.parent(self)
-        active_id = tuple(refpoints.active_id)
-        
-        radius = 10.0
-        
-        with cgl(DepthMask=0, DEPTH_TEST=False, BLEND=True):
-            for point in self.points:
-                p_abs = point.world_pos
-                xy_proj = sv.project(p_abs)
-                if not xy_proj: continue
-                
-                is_active = (active_id == (self.id, point.id))
-                
-                cgl.Color = (0.0, 0.0, 0.0, 0.5)
-                with cgl.batch('POLYGON') as batch:
-                    batch.sequence(batch.circle(xy_proj, radius, resolution=20))
-                
-                cgl.Color = (0.0, 0.0, 0.0, 1.0)
-                with cgl.batch('LINE_STRIP') as batch:
-                    batch.sequence(batch.circle(xy_proj, radius, resolution=20))
-                
-                cgl.Color = ((1.0, 1.0, 0.0, 1.0) if is_active else (1.0, 1.0, 1.0, 1.0))
-                cgl.text.draw(point.name, xy_proj, (0.5, 0.5)) # this modifies the BLEND state
-                cgl.BLEND = True
+    def collect_points(self, sv, res_points, active_id):
+        view_dir = sv.forward
+        for point in self.points:
+            p_abs = point.location_world
+            xy_proj = sv.project(p_abs)
+            if not xy_proj: continue
+            z_proj = view_dir.dot(point.location_world)
+            is_active = (active_id == (self.id, point.id))
+            res_points.append((point.name, is_active, xy_proj, z_proj))
 
 @addon.Operator(idname="view3d.transform_tools_refpoints_new_cluster", options={'INTERNAL'}, description="New reference point")
 def Operator_Refpoints_New_Cluster(self, context, event):
@@ -2050,18 +2385,6 @@ class RefpointsPG:
                 with layout.row(True)(alignment='LEFT'):
                     layout.operator("view3d.transform_tools_refpoints_new_cluster", text="New", icon='ZOOMIN')
     
-    @addon.view3d_draw('POST_VIEW')
-    def draw_view():
-        context = bpy.context
-        tfm_tools = get_transform_tools(context)
-        self = tfm_tools.refpoints
-        if not self.visible: return
-        
-        RefpointsPG.modelview_matrix = cgl.Matrix_ModelView
-        RefpointsPG.projection_matrix = cgl.Matrix_Projection
-    
-    del draw_view
-    
     @addon.view3d_draw('POST_PIXEL')
     def draw_px():
         context = bpy.context
@@ -2071,20 +2394,43 @@ class RefpointsPG:
         
         sv = SmartView3D(context)
         
-        modelview_matrix = cgl.Matrix_ModelView
-        projection_matrix = cgl.Matrix_Projection
+        cgl.Matrix_ModelView = cgl.Matrix_ModelView_3D
+        cgl.Matrix_Projection = cgl.Matrix_Projection_3D
         
-        cgl.Matrix_ModelView = RefpointsPG.modelview_matrix
-        cgl.Matrix_Projection = RefpointsPG.projection_matrix
-        
+        res_lines = []
         for cluster in self.clusters:
-            cluster.draw_lines(sv)
+            cluster.collect_lines(sv, res_lines)
         
-        cgl.Matrix_ModelView = modelview_matrix
-        cgl.Matrix_Projection = projection_matrix
+        cgl.Color = (0.0, 0.0, 0.0, 0.75)
+        with cgl(LineWidth=1, DepthMask=0, DEPTH_TEST=False, BLEND=True, LINE_STIPPLE=True):
+            with cgl.batch('LINES') as batch:
+                for line in res_lines:
+                    batch.vertex(*line[0])
+                    batch.vertex(*line[1])
         
+        cgl.Matrix_ModelView = cgl.Matrix_ModelView_2D
+        cgl.Matrix_Projection = cgl.Matrix_Projection_2D
+        
+        active_id = tuple(self.active_id)
+        res_points = []
         for cluster in self.clusters:
-            cluster.draw_points(sv)
+            cluster.collect_points(sv, res_points, active_id)
+        res_points.sort(key=(lambda item: -item[-1]))
+        
+        radius = 10.0
+        with cgl(DepthMask=0, DEPTH_TEST=False, BLEND=True):
+            for point_name, is_active, xy_proj, z_proj in res_points:
+                cgl.Color = (0.0, 0.0, 0.0, 0.5)
+                with cgl.batch('POLYGON') as batch:
+                    batch.sequence(batch.circle(xy_proj, radius, resolution=20))
+                
+                cgl.Color = (0.0, 0.0, 0.0, 1.0)
+                with cgl.batch('LINE_STRIP') as batch:
+                    batch.sequence(batch.circle(xy_proj, radius, resolution=20))
+                
+                cgl.Color = ((1.0, 1.0, 0.0, 1.0) if is_active else (1.0, 1.0, 1.0, 1.0))
+                cgl.text.draw(point_name, xy_proj, (0.5, 0.5)) # this modifies the BLEND state
+                cgl.BLEND = True
     
     del draw_px
 
@@ -2154,6 +2500,7 @@ def scene_update(scene):
     context = bpy.context
     tfm_tools = get_transform_tools(context, search=True)
     tfm_tools.workplane.on_scene_update()
+    tfm_tools.cursor.on_scene_update()
 
 @addon.on_unregister
 def on_unregister():

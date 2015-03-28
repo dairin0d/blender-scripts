@@ -1,4 +1,4 @@
-#  ***** BEGIN GPL LICENSE BLOCK *****
+﻿#  ***** BEGIN GPL LICENSE BLOCK *****
 #
 #  This program is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -608,11 +608,18 @@ class CoordSystemMatrix:
         
         return coord
     
-    @classmethod
-    def current(cls, context=None):
+    @staticmethod
+    def current(context=None):
         if context is None: context = bpy.context
         manager = get_coordsystem_manager(context)
         return CoordSystemMatrix(manager.current, context=context)
+    
+    @staticmethod
+    def custom(name, context=None):
+        if context is None: context = bpy.context
+        manager = get_coordsystem_manager(context)
+        coordsys = manager.coordsystems.get(name)
+        return CoordSystemMatrix(coordsys, context=context)
 
 @addon.PropertyGroup
 class GridColorsPG:
@@ -663,16 +670,18 @@ class CoordSystemPG:
     icon_R = 'MAN_ROT'
     icon_S = 'MAN_SCALE'
     
-    customizable_L = {'OBJECT', 'CAMERA', 'BOOKMARK'}
+    customizable_L = {'OBJECT', 'CAMERA'}
     customizable_R = {'OBJECT', 'CAMERA', 'ORIENTATION'}
     customizable_S = {'OBJECT', 'CAMERA'}
     
     def make_aspect(name, items):
-        title = "{} type".format(name)
+        aspect_name = name
+        mode_title = "{} type".format(name)
         @addon.PropertyGroup
         class CoordsystemAspect:
-            mode = 'GLOBAL' | prop(title, title, items=items)
-            obj_name = "" | prop() # object/orientation/bookmark name
+            title = aspect_name
+            mode = 'GLOBAL' | prop(mode_title, mode_title, items=items)
+            obj_name = "" | prop() # object/orientation name
             bone_name = "" | prop()
             def copy(self, template):
                 self.mode = template.mode
@@ -769,6 +778,38 @@ class CoordSystemPG:
     reset_Z = make_reset("Z")
     reset_T = make_reset("T")
     
+    @staticmethod
+    def btn_pick_aspect(context, event, arg):
+        "Click: pick {} from active object, Shift+Click: pick all aspects from active object"
+        
+        manager = get_coordsystem_manager(context)
+        coordsys = manager.current
+        if not coordsys: return False
+        
+        aspect_id = arg
+        
+        if UIMonitor.shift:
+            aspects = (coordsys.aspect_L, coordsys.aspect_R, coordsys.aspect_S)
+        else:
+            aspects = (getattr(coordsys, "aspect_"+aspect_id),)
+        
+        for aspect in aspects:
+            if aspect.mode not in {'OBJECT', 'CAMERA'}: aspect.mode = 'OBJECT'
+            
+            obj = context.active_object
+            if obj:
+                aspect.obj_name = obj.name
+                if (obj.type == 'ARMATURE') and (aspect.mode == 'OBJECT'):
+                    bone = (obj.data.edit_bones if (obj.mode == 'EDIT') else obj.data.bones).active
+                    aspect.bone_name = (bone.name if bone else "")
+                else:
+                    aspect.bone_name = ""
+            else:
+                aspect.obj_name = ""
+                aspect.bone_name = ""
+        
+        return True
+    
     def draw(self, layout):
         layout = NestedLayout(layout, addon.module_name+".coordsystem")
         
@@ -800,8 +841,8 @@ class CoordSystemPG:
         with layout.row(True):
             is_customizable = (aspect.mode in customizable)
             
-            op = layout.operator("view3d.coordsystem_pick_aspect", text="", icon=aspect_icon)
-            op.aspect_id = aspect_id
+            layout.button(self.btn_pick_aspect, text="", icon=aspect_icon,
+                tooltip=self.btn_pick_aspect.__doc__.format(aspect.title)).arg = aspect_id
             
             with layout.row(True)(enabled=is_customizable):
                 if aspect.mode == 'OBJECT':
@@ -819,32 +860,8 @@ class CoordSystemPG:
             with layout.row(True)(scale_x=0.16):
                 layout.prop(aspect, "mode", text="", icon=aspect_icons[aspect.mode])
 
-@addon.Operator(idname="view3d.coordsystem_pick_aspect", options={'INTERNAL', 'REGISTER'}, description=
-"Click: Pick this aspect from active object")
-def Operator_Coordsystem_Pick_Aspect(self, context, event, aspect_id=""):
-    manager = get_coordsystem_manager(context)
-    coordsys = manager.current
-    if not coordsys: return {'CANCELLED'}
-    
-    aspect = getattr(coordsys, "aspect_"+aspect_id)
-    if aspect.mode != 'OBJECT': return {'CANCELLED'}
-    
-    obj = context.active_object
-    if obj:
-        aspect.obj_name = obj.name
-        if obj.type == 'ARMATURE':
-            bone = (obj.data.edit_bones if (obj.mode == 'EDIT') else obj.data.bones).active
-            aspect.bone_name = (bone.name if bone else "")
-        else:
-            aspect.bone_name = ""
-    else:
-        aspect.obj_name = ""
-        aspect.bone_name = ""
-    
-    return {'FINISHED'}
-
 @addon.Operator(idname="view3d.coordsystem_new", options={'INTERNAL', 'REGISTER'}, description=
-"Click: Copy current coordsystem, Ctrl+Click: bake current coordsystem, Shift+Click: bake manipulator, Alt+Click: bake workplane")
+"Click: copy current coordsystem, Ctrl+Click: bake current coordsystem, Shift+Click: bake manipulator, Alt+Click: bake workplane")
 def Operator_Coordsystem_New(self, context, event):
     manager = get_coordsystem_manager(context)
     prev = manager.current

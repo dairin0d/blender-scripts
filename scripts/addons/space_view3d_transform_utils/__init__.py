@@ -19,7 +19,7 @@ bl_info = {
     "name": "Batch Transforms (Transform Utils)",
     "description": "Batch Transforms (Transform Utils)",
     "author": "dairin0d, moth3r",
-    "version": (0, 4, 0),
+    "version": (0, 4, 5),
     "blender": (2, 7, 0),
     "location": "View3D > Transform category in Tools panel",
     "warning": "Experimental / WIP",
@@ -68,61 +68,13 @@ addon = AddonManager()
 """
 PROBLEMS:
 * the way I work with axis-angle rotation mode seems buggy
-* unlimited workplane causes "View All" operator to "corrupt" 3D view. Right now I block the shortcut, but it might be better to provide a custom override
 * bug/glitch with VIEW system, noticeable when chosed as a manipulator orientation (view matrix (or other params) lag one frame behind, which leads to visible distortions of the manipulator when rotating the view)
 
 \\ vmath / gmath for various vector/geometric utilities?
 
-\\ Alt+Numpad shortcuts seem to be not occupied by anything, so I can probably use them for Align View To Workplane.
+moth3r asks to not post on forum until he makes a video
 
-Transform Tools:
-    * is it possible to rotate around workplane using numpad keys?
-        * provide custom implementation of "Numpad navigation" (and "View All")
-    
-    * Spatial tools (snap/align cursor/workplane/coordsystem/selection)
-        * option: snap/align selection as a whole or each element individually
-        * ability to align workplane to object / polygon / plane
-        * "axis-matching rotation" operator (rotate selection to make one vector parallel to another)
-        * add operation to align object to workplane via its face
-            think of an operation to "unrotate" an object which has rotated data
-            \\ as an example (though probably not optimal):
-            http://blenderartists.org/forum/showthread.php?256295-Script-to-align-objects-to-a-face-and-line-on-that-face
-        
-        * Workplane from world/view/object/orientation/coordsystem XY/YZ/XZ
-        * Workplane from selection (orthogonal to normal)
-        * Workplane from 3D-view-picked normal
-        * Workplane from 3 selected objects/elements (will lie in the plane)
-        * Workplane from 2 selected objects/elements (will be orthogonal to line)
-    
-    * Spatial queries? ("select all objects wich satisfy the following conditions")
-        * Distance to point/curve/surface/volume
-        * Dot product/angle to vector
-        * Intersection (as point/wire/surface/volume) with point/curve/surface/volume
-        * Raycast?
-        * option: how to store the result: as selection or as object/vertex group
-    
-    * Move/rotate/scale workplane and/or cursor
-        * switch absolute/relative coords (mostly useful for snapping to grid/increments, as it defines the grid origin)
-        * switch coordinate systems
-        * switch move/rotate/scale modes
-        * axis locks
-        * header display of modes/coordinates
-            * customizable precision
-        * snap to bbox/faces/edges/vertices/grid
-        * snap to raw/preview/render mesh
-        * flat or interpolated normal
-        * option to snap only to solid?
-        * snap cursor to workplane's plane (if it's visible)
-        * option to adjust cursor and view when picking workplane? (also: adjust workplane and view when picking cursor position)
-    
-    * stick cursor/workplane to object/bone/polygon (stored in scene?)
-    * cursor history (show trace, max size, current entry)
-    * cursor hiding
-    * options to draw guides and snap elements (?)
-    
-    * CAD-like guides?
-    
-    * copy/paste to workplane? (moth3r's idea, not really sure what he meant)
+[DONE] Shift+Click on pos/rot/scale buttons in Coordsystem -> pick all aspects from active object/bone
 
 Copy/Paste coordinates:
     * customizable decimal and axis separators for coordinate copy-pasting (e.g. dot/comma, comma/semicolon/space/tab/newline)
