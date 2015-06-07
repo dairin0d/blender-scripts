@@ -19,7 +19,7 @@ bl_info = {
     "name": "Batch Transforms (Transform Utils)",
     "description": "Batch Transforms (Transform Utils)",
     "author": "dairin0d, moth3r",
-    "version": (0, 4, 5),
+    "version": (0, 4, 8),
     "blender": (2, 7, 0),
     "location": "View3D > Transform category in Tools panel",
     "warning": "Experimental / WIP",
@@ -70,7 +70,11 @@ PROBLEMS:
 * the way I work with axis-angle rotation mode seems buggy
 * bug/glitch with VIEW system, noticeable when chosed as a manipulator orientation (view matrix (or other params) lag one frame behind, which leads to visible distortions of the manipulator when rotating the view)
 
+BUG: if editmode object is not the same as active object, selection-walker's bmesh is None
+
 \\ vmath / gmath for various vector/geometric utilities?
+
+Fix MeshCache/bounding_box according to MeshBaker logic
 
 moth3r asks to not post on forum until he makes a video
 
@@ -130,6 +134,8 @@ class ThisAddonPreferences:
     
     auto_align_objects = True | prop("Automatically switch between World and View alignment of new objects")
     
+    project_cursor_3d = False | prop("Project 3D cursor on workplane when aligning view to workplane")
+    
     def draw(self, context):
         layout = NestedLayout(self.layout)
         
@@ -159,6 +165,7 @@ class ThisAddonPreferences:
         
         with layout.row()(alignment='LEFT'):
             layout.prop(self, "auto_align_objects", text="Auto switch 'Editing\Align To'")
+            layout.prop(self, "project_cursor_3d", text="Project 3D cursor on workplane")
 
 def register():
     addon.use_zbuffer = True

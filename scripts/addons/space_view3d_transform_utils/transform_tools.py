@@ -25,7 +25,9 @@ import time
 import json
 import string
 import itertools
+import traceback
 
+import mathutils
 import mathutils.geometry
 from mathutils import Color, Vector, Euler, Quaternion, Matrix
 
@@ -36,10 +38,10 @@ except ImportError:
     dairin0d_location = "."
 
 exec("""
-from {0}dairin0d.utils_math import lerp, matrix_LRS, matrix_compose, matrix_decompose, matrix_inverted_safe, orthogonal_XYZ, orthogonal, matrix_flatten, matrix_unflatten
+from {0}dairin0d.utils_math import lerp, matrix_LRS, matrix_compose, matrix_decompose, matrix_inverted_safe, orthogonal_XYZ, orthogonal, orthogonal_in_XY, matrix_flatten, matrix_unflatten, line_line_t, line_plane_t, line_sphere_t, clip_primitive, dist_to_segment, transform_point_normal, transform_plane
 from {0}dairin0d.utils_python import setattr_cmp, setitem_cmp, AttributeHolder, attrs_to_dict, dict_to_attrs, bools_to_int, binary_search
-from {0}dairin0d.utils_view3d import SmartView3D, Pick_Base
-from {0}dairin0d.utils_blender import Selection, MeshCache, BlUtil
+from {0}dairin0d.utils_view3d import SmartView3D, RaycastResult, Pick_Base
+from {0}dairin0d.utils_blender import Selection, MeshCache, MeshBaker, BlUtil
 from {0}dairin0d.utils_userinput import KeyMapUtils
 from {0}dairin0d.utils_gl import cgl
 from {0}dairin0d.utils_ui import NestedLayout, tag_redraw, rv3d_from_region, messagebox
@@ -69,21 +71,33 @@ del workplane_matrix
 
 """
 TODO:
+* option to turn on/off cursor projection on workplane when view is aligned to workplane
+
+update documentation
+upload latest versions
+
+present a statement:
+why this addon exists
+this is proof of concept for ...
+~these features should be built-in?
+
+I have to rethink and refactor a lot of code (again), which is necessary to reliably handle certain situations (addons with different versions of the library, multiple windows, per-area/per-region property storage, local view).
+
+TODO:
     * generic transform operator (in particular, for cursor, workplane, refpoints)
-        * implement snap_cast (combine select, raycast and depthcast)
+        * [DONE] implement snap_cast (combine select, raycast and depthcast)
+        * special-case snap elements: cursor, workplane, refpoints
+            * snap cursor to workplane's plane (if it's visible)
+            * snap to grid
+        * [DONE] option to snap only to solid? (WYSIWYG requires a lot of effort but will rarely if ever be used)
         * switch absolute/relative coords (mostly useful for snapping to grid/increments, as it defines the grid origin)
         * switch coordinate systems
         * switch move/rotate/scale modes
         * axis locks
         * header display of modes/coordinates
             * customizable precision
-        * snap to bbox/faces/edges/vertices/grid
-        * snap to raw/preview/render mesh
-        * flat or interpolated normal
-        * option to snap only to solid?
-        * snap cursor to workplane's plane (if it's visible)
         * option to adjust cursor and view when picking workplane? (also: adjust workplane and view when picking cursor position)
-        * options to draw guides and snap elements (?)
+        * option to draw guides (in Enhanced 3D Cursor, guides were useful to see cursor's position in current coordinate system)
         * moth3r asks for an operator to "pick an edge" (so that workplane's main axis will be rotated parallel to the picked edge)
         * SketchUp's 3-click workplane/coordsystem setup? see https://www.youtube.com/watch?v=Hp_iTKs7Xcc
     
@@ -96,9 +110,26 @@ TODO:
     
     * make all 3d-render callbacks priority-sorted; make cursor hiding a "high-priority" view3d callback
     
-    * CAD-like guides?
+    * CAD-like guides? (angles, distances?)
     
-    * copy/paste to workplane? (moth3r's idea, not really sure what he meant)
+    * copy/paste to workplane? (moth3r's idea, not really sure what he meant - maybe just aligning+snapping objects to workplane)
+
+rewrite everything for multiple windows & local views ? (e.g. local-view manipulator position can be different from global one, due to different set of objects selected)
+also, in multi-window case, the can't be a single mouse position (it depends on the window)
+
+snap to workplane
+snap to refpoints
+snap to cursor
+snap to world center?
+snap to manipulator?
+
+snap to midpoint, center, ...
+in-operator shortcuts for switching various modes
+"bbox" mode (remebers last picked object and raycasts only against bbox until bbox mode is disabled) ?
+
+moth3r asks to display help/tooltip about in-operator shortcuts
+
+!!! attached cursor/workplane/etc. for some reason lags behind the object
 
 WARNING: in current implementation, 3D-cursor-related functions work only for the main (scene) cursor. They ignore the local-view cursor.
 
@@ -107,6 +138,10 @@ Auto initialization (binding) of IDBlock selectors by property path? Generic new
 
 * [DONE] allow to switch to ortho mode when not aligned to workplane (at least until view is rotated)
 * [DONE] implement workplane position in current coordsystem (not rotation, because of the euler wrapping)
+
+
+moth3r asks to implement grab/rotate/etc for workplane
+see also: sticky keys
 
 
 make an option to navigate around workplane even if it's not visible
@@ -118,7 +153,7 @@ low priority: remember what was the last mode before view was snapped to top/sid
     make an option to always override blender's defaults, not just when workplane is visible
     write it in documentation
 
-make options to turn off panels completely (for batch operations and transform tools)
+make options to turn off some panels completely (for batch operations and transform tools)
 
 
 
@@ -138,138 +173,14 @@ http://blenderartists.org/forum/showthread.php?365078-User-Coordinate-Space-requ
 http://blenderartists.org/forum/showthread.php?255662-GSOC-2012-Precision-Modelling-Tools
 http://blenderartists.org/forum/showthread.php?256295-Script-to-align-objects-to-a-face-and-line-on-that-face
 http://blenderartists.org/forum/showthread.php?326991-Transform-Orientations-typical-interaction-use-case-%28workflow-UI%29
+http://blenderartists.org/forum/showthread.php?366818-Addon-BBox-Origin-Setup
 http://www.cad4arch.com/cadtools/
+http://www.kurzemnieks.com/hierarchy-helper-tools-blender-addon/
+http://www.blenderartists.org/forum/showthread.php?355154-Addon-Retopo-MT
+http://knowledge.autodesk.com/support/fusion-360/learn-explore/caas/CloudHelp/cloudhelp/ENU/Fusion-Form/files/GUID-D9E1DC97-8C60-447A-A30A-54F99FB9CE3B-htm.html
 
-
-
-
-\\ Other quick actions for refpoints: Modifier+Click on refpoint -> show/hide? raycast?
-# AB - line from A to B; -AB - line from B to A; A1 - line from A to A1; -A1 - line from A1 to A; A1B - line from A1 to B; A1B1 - line from A1 to B1
-# three points define a plane or a normal to plane
-# move A B - moves from A to B
-# move A B 0.5 - moves from A to ensude distance 0.5 to B
-# move[object: :O, geometry: :G] [individual: *]FROM TO [distance: a number] [use grid/increment: #] [lock axes: lowercase xyz] // increment/lock coordsystem is specified outside of the command line (or: simply use current coordsystem?)
-#   some special cases: (closest | origin | mean | center | min | max) * (objects' origins | geometry); world, cursor, workplane, pivot, active ?
-
-selection (aliases: sel, s) - objects are transformed along with their geometry
-objects (aliases: obj, o) - geometry remains in place
-geometry (aliases: geo, gmt, gry, g) - objects' matrices remain the same
-cursor (aliases: cur, c)
-workplane (aliases: plane, pln, wrk, p)
-coordsystem? (aliases: system, sys, t)
-
-world (aliases: wrl, wrd, w)
-active (aliases: act, a)
-view (aliases: v)
-normal (aliases: nor, n)
-mean (aliases: avg)
-center (aliases: cnt, ctr, cen)
-min
-max
-manipulator? (aliases: man, m) (used for pivot / current orientation)
-
-capital letters - refpoints
-
-* - individual mode
-& - closest/nearest mode
-# - grid/increment
-
-+/- x/y/z axes? arbitrary offsets?
-
-> snap/move
-: align/rotate
-/ match/scale
-
-
-examples:
-* align objects to workplane (individually, use nearest axes): s*&:p
-* snap objects to workplane: (individually, projecting on workplane's XY plane): s*>p.z
-* align workplane to world's -XZ: p:w.-xz
-
-Syntax: WHAT [FROM] OPERATION TO
-if FROM is not specified, it is considered the same as WHAT
-
-
-queries:
-& - and
-| - or
-! - not
-( ) - parentheses
-mag(a - b) - euclidean distance between a and b ((x^2+y^2+z^2)^0.5)
-man(a - b) - manhattan distance between a and b (|x|+|y|+|z|)
-max(a - b) - max axis (max(|x|, |y|, |z|))
-mag(a - b.xy) - distance from a's position to b's XY plane
-dist(a, b) - distance to b's geometry ?
-angle(a.z, b.z) - angle between vectors
-angle(obj - cam, cam.-z) - angle to object from camera's forward direction
-ray(a, b) - raycast from a to b ?
-
-What: Selection, Cursor, Workplane
-Snap location, Snap geometry origin, Look at:
-    From: Individual, Cursor, Pivot, World origin, Active, Coordsystem origin, Workplane, (Mean, Center, Min, Max)*(origins, geometry), Closest, Refpoints
-    To: Grid, Cursor, Pivot, World origin, Active, Coordsystem origin, Workplane, (Mean, Center, Min, Max)*(origins, geometry), Refpoints
-Align (parallel to, orthogonal to, arbitrary angle to?):
-    From: Individual X/Y/Z, World X/Y/Z, Active X/Y/Z, Camera X/Y/Z, View X/Y/Z, Workplane X/Y/Z, Normal X/Y/Z, Orientation X/Y/Z, Refpoints
-    To: World X/Y/Z, Active X/Y/Z, Camera X/Y/Z, View X/Y/Z, Workplane X/Y/Z, Normal X/Y/Z, Orientation X/Y/Z, Refpoints
-Options:
-    objects or geometry origin or geometry (Mean, Center, Min, Max)
-        transform object and geometry along with it
-        transform object, keep geometry in place
-        transform geometry, keep object in place
-    individual or as a whole (rigid system)
-    all axes or only some axes ("projection")
-
-For snapping, 2 points must be specified
-For aligning, 4 points must be specified
-    
-* option: snap/align selection as a whole or each element individually
-* ability to align workplane to object / polygon / plane
-* "axis-matching rotation" operator (rotate selection to make one vector parallel to another)
-* add operation to align object to workplane via its face
-    think of an operation to "unrotate" an object which has rotated data
-    \\ as an example (though probably not optimal):
-    http://blenderartists.org/forum/showthread.php?256295-Script-to-align-objects-to-a-face-and-line-on-that-face
-
-* Workplane from world/view/object/orientation/coordsystem XY/YZ/XZ
-* Workplane from selection (orthogonal to normal)
-* Workplane from 3D-view-picked normal
-* Workplane from 3 selected objects/elements (will lie in the plane)
-* Workplane from 2 selected objects/elements (will be orthogonal to line)
-
-@addon.PropertyGroup
-class SnapPointPG:
-    coordsystem = "" | prop()
-    use_geometry = False | prop()
-    mode = '' | prop(items=[('ZERO', "Zero"), ('ACTIVE', "Active"), ('WORKPLANE', "Workplane"), ('CURSOR', "Cursor"), ('PIVOT', "Pivot"), ('ORIGIN', "Origin"), ('MEAN', "Mean"), ('CENTER', "Center"), ('MIN', "Min"), ('MAX', "Max")])
-    offset = Vector() | prop()
-
-@addon.PropertyGroup
-class SnapAlignOperationPG: # maybe a better-fitting name is Match?
-    move = False | prop()
-    rotate = False | prop()
-    scale = False | prop()
-    transform_object = True | prop()
-    transform_geometry = True | prop()
-    src0 = SnapPointPG | prop()
-    src1 = SnapPointPG | prop()
-    dst0 = SnapPointPG | prop()
-    dst1 = SnapPointPG | prop()
-    individual = False | prop()
-    increment = False | prop()
-    closest = False | prop()
-    distance = 0.0 | prop()
-    angle = 0.0 | prop()
-    factor = 1.0 | prop()
-    lock_coordsystem = "" | prop()
-    lock_axes = {} | prop(items=['X', 'Y', 'Z'])
-
-@addon.Menu(idname="VIEW3D_MT_transform_tools_spatial_queries", label="Spatial queries", description="Spatial queries")
-def Menu_Spatial_Queries(self, context):
-    layout = NestedLayout(self.layout)
-    layout.label("Distance to point/curve/surface/volume") # special cases: planes
-    layout.label("Intersection with point/curve/surface/volume") # special cases: half-spaces
-    layout.label("Angle to point/vector")
-    layout.label("Raycast from point/vector")
+http://blenderartists.org/forum/showthread.php?351179-Official-Addons-Repair-Project-for-Blender-2-73
+http://blenderartists.org/forum/showthread.php?354412-Is-2-73-going-to-break-all-exporting-add-ons/page2
 """
 
 # =========================================================================== #
@@ -631,31 +542,12 @@ class WorkplanePG:
     plane_z = Vector((0,0,1)) | prop()
     plane_t = Vector((0,0,0)) | prop()
     
-    @staticmethod
-    def transform_plane(m, x, y, z, t):
-        p0 = Vector(t)
-        px = p0 + Vector(x)
-        py = p0 + Vector(y)
-        pz = p0 + Vector(z)
-        
-        p0 = m * p0
-        px = m * px
-        py = m * py
-        pz = m * pz
-        
-        t = p0
-        y = (py - p0).normalized()
-        z = (px - p0).cross(y).normalized()
-        x = y.cross(z)
-        
-        return (x, y, z, t)
-    
     def _get(self):
         m = self.attach_info.matrix
-        return self.transform_plane(m, self.plane_x, self.plane_y, self.plane_z, self.plane_t)
+        return transform_plane(m, self.plane_x, self.plane_y, self.plane_z, self.plane_t)
     def _set(self, xyzt):
         m = matrix_inverted_safe(self.attach_info.matrix)
-        self.plane_x, self.plane_y, self.plane_z, self.plane_t = self.transform_plane(m, *xyzt)
+        self.plane_x, self.plane_y, self.plane_z, self.plane_t = transform_plane(m, *xyzt)
         self.plane_rot_cache_from_xyz()
         self.align_to_view(True)
     plane_xyzt = property(_get, _set) # global
@@ -753,6 +645,29 @@ class WorkplanePG:
         elif op_idname == "view3d.view_orbit":
             bpy.ops.view3d.orbit_around_workplane('INVOKE_DEFAULT', mode=op_props["type"])
     
+    def _get(self):
+        rv3d_context = UIMonitor.last_rv3d_context
+        if not rv3d_context: return False
+        space_data = rv3d_context["space_data"]
+        coordsys_manager = get_coordsystem_manager()
+        is_orientation = (space_data.transform_orientation == "System")
+        is_coordsystem = (coordsys_manager.coordsystem.selector == "Workplane")
+        return (is_orientation and is_coordsystem)
+    def _set(self, value):
+        rv3d_context = UIMonitor.last_rv3d_context
+        if not rv3d_context: return
+        space_data = rv3d_context["space_data"]
+        coordsys_manager = get_coordsystem_manager()
+        try:
+            space_data.transform_orientation = ("System" if value else 'GLOBAL')
+        except Exception as exc: # e.g. if not initialized
+            pass
+        try:
+            coordsys_manager.coordsystem.selector = ("Workplane" if value else "Global")
+        except Exception as exc: # e.g. if no such coordsystem
+            pass
+    use_workplane_coordsystem = False | prop("Switch between workplane and global coordsystem", get=_get, set=_set)
+    
     def draw(self, layout):
         title = "Workplane"
         with layout.row(True):
@@ -763,6 +678,7 @@ class WorkplanePG:
             with layout.row(True)(alignment='RIGHT'):
                 layout.prop(self, "swap_axes", text="", icon='MANIPUL')
                 layout.operator("view3d.align_view_to_workplane", text="", icon='LAMP_AREA')
+                layout.prop(self, "use_workplane_coordsystem", text="", icon='NDOF_DOM')
         
         # layout.operator("view3d.snap_cursor_workplane", text="", icon='CURSOR')
         # layout.operator("view3d.align_objects_to_workplane", text="", icon='OBJECT_DATA')
@@ -771,7 +687,9 @@ class WorkplanePG:
             with layout.column(True):
                 with layout.row(True):
                     self.attach_info.draw(layout)
-                    layout.operator("view3d.pick_workplane", text="", icon='SNAP_NORMAL')
+                    op = layout.operator("view3d.transform_snap", text="", icon='SNAP_NORMAL')
+                    op.mode = 'WORKPLANE'
+                    op.use_snap = True
                 
                 with layout.row(True):
                     layout.prop(self, "plane_pos", text="X", index=0)
@@ -832,13 +750,10 @@ class WorkplanePG:
             def drawline(p0, p1, is10=False):
                 p0 = m * p0
                 p1 = m * p1
-                intersect = mathutils.geometry.intersect_line_sphere(p0, p1, view_pos, visible_radius, False)
-                if not intersect: return
-                pA, pB = intersect
-                if (not pA) or (not pB): return
-                pd = (p1 - p0).normalized()
-                tA = max((pA - p0).dot(pd), 0.0)
-                tB = max((pB - p0).dot(pd), 0.0)
+                tAtB = line_sphere_t((p0, p1), (view_pos, visible_radius), clip0=0.0)
+                if not tAtB: return
+                tA, tB = tAtB
+                pd = (p1 - p0)
                 pA = p0 + pd * tA
                 pB = p0 + pd * tB
                 _c_LS = (c_LS10 if is10 else c_LS)
@@ -1102,126 +1017,18 @@ class WorkplanePG:
         else:
             self.delete_workplane_objs()
     
+    def load_post(self):
+        self.block_navigation_operators(self.snap_any)
+    
+    def after_register(self):
+        self.block_navigation_operators(self.snap_any)
+    
     def on_unregister(self):
         self.delete_workplane_objs()
         self.block_navigation_operators(False)
     
     def on_ui_monitor(self, context, event):
         pass
-
-@addon.Operator(idname="view3d.pick_workplane", options={'BLOCKING'}, description=
-"Pick workplane")
-class Operator_Pick_Workplane:
-    def invoke(self, context, event):
-        tfm_tools = get_transform_tools(context)
-        workplane = tfm_tools.workplane
-        
-        self.snap_to_plane = workplane.snap_to_plane
-        self.snap_to_cartesian = workplane.snap_to_cartesian
-        self.snap_to_polar = workplane.snap_to_polar
-        if not workplane.snap_any: workplane.snap_to_cartesian = True
-        
-        self.obj_name = workplane.attach_info.obj_name
-        self.attach_matrix = workplane.attach_info.matrix
-        
-        work_objs = set(workplane.get_workplane_objs())
-        
-        self.xyzt = workplane.plane_xyzt
-        
-        self.swap_axes = workplane.swap_axes
-        workplane.swap_axes = False
-        
-        scene = context.scene
-        self.scene = scene
-        
-        raycastable_objects = []
-        for obj in scene.objects:
-            if obj.type != 'MESH': continue
-            if not obj.is_visible(scene): continue
-            if obj in work_objs: continue
-            raycastable_objects.append((obj, matrix_inverted_safe(obj.matrix_world)))
-        self.raycastable_objects = raycastable_objects
-        
-        UIMonitor.update(context, event)
-        
-        #context.window.cursor_modal_set('EYEDROPPER')
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
-    
-    def ray_cast(self, ray):
-        for obj, m_inv in self.raycastable_objects:
-            try:
-                result = obj.ray_cast(m_inv * ray[0], m_inv * ray[1])
-            except RuntimeError: # e.g. meshes in edit mode
-                continue
-            
-            if result and (result[2] >= 0):
-                m = obj.matrix_world
-                
-                p0 = result[0]
-                n0 = result[1]
-                
-                p = m * p0
-                
-                x, y, z = orthogonal_XYZ(None, None, n0)
-                px = m * (p0 + x)
-                py = m * (p0 + y)
-                x = px - p
-                y = py - p
-                n = x.cross(y)
-                n.normalize()
-                
-                return (True, obj, m, p, n)
-        
-        return (False, None, Matrix(), Vector(), Vector())
-    
-    def modal(self, context, event):
-        UIMonitor.update(context, event)
-        
-        cancel = (event.type in {'ESC', 'RIGHTMOUSE'})
-        confirm = (event.type == 'LEFTMOUSE') and (event.value == 'PRESS')
-        
-        mouse = Vector((event.mouse_x, event.mouse_y))
-        
-        raycast_result = None
-        sv = SmartView3D((mouse.x, mouse.y, 0))
-        if sv:
-            ray = sv.ray(mouse, coords='WINDOW')
-            raycast_result = self.ray_cast(ray)
-            depthcast_result = sv.depth_cast(mouse, coords='WINDOW')
-            if raycast_result[0] and depthcast_result[0]:
-                rl = (raycast_result[-2] - ray[0]).magnitude
-                dl = (depthcast_result[-2] - ray[0]).magnitude
-                epsilon = 1e-2
-                if (rl - dl) > rl*epsilon: raycast_result = depthcast_result
-                #if raycast_result[4].magnitude < 0.5:
-                #    raycast_result = list(raycast_result)
-                #    raycast_result[4] = depthcast_result[4]
-            elif depthcast_result[0]:
-                raycast_result = depthcast_result
-        
-        tfm_tools = get_transform_tools(context)
-        workplane = tfm_tools.workplane
-        
-        if raycast_result and raycast_result[0]:
-            x, y, z = orthogonal_XYZ(None, None, raycast_result[4], "z")
-            t = raycast_result[3]
-            obj = raycast_result[1]
-            workplane.attach_info.obj_name = (obj.name if obj else "")
-            workplane.plane_xyzt = (x, y, z, t)
-        
-        if cancel or confirm:
-            if cancel:
-                workplane.snap_to_plane = self.snap_to_plane
-                workplane.snap_to_cartesian = self.snap_to_cartesian
-                workplane.snap_to_polar = self.snap_to_polar
-                workplane.attach_info.obj_name = self.obj_name
-                workplane.attach_info.matrix = self.attach_matrix
-                workplane.plane_xyzt = self.xyzt
-            workplane.swap_axes = self.swap_axes
-            #context.window.cursor_modal_restore()
-            return ({'FINISHED'} if confirm else {'CANCELLED'})
-        return {'RUNNING_MODAL'}
 
 @addon.Operator(idname="view3d.snap_cursor_workplane", options={'BLOCKING'}, description=
 "Click: snap cursor to workplane origin, Ctrl+Click: snap workplane to cursor")
@@ -1274,7 +1081,6 @@ def Operator_Align_Objects_To_Workplane(self, context, event):
             best_o = o_xyz[best_o]
             best_w = w_xyz[best_w]
             if best_o.dot(best_w) < 0: best_w = -best_w
-            print((best_o, best_w))
             q = best_o.rotation_difference(best_w)
             o_xyz = (q * o_xyz[0], q * o_xyz[1], q * o_xyz[2])
             om3.rotate(q) # 4x4 matrix cannot be rotated
@@ -1481,11 +1287,13 @@ class Operator_Align_View_To_Workplane:
         self.time0 = time.clock()
         self.time1 = self.time0 + self.duration
         
-        addon.timer_add(0.05, owner=self)
+        addon.timer_add(0.025, owner=self)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
     
     def project_cursor(self, context):
+        prefs = addon.preferences
+        if not prefs.project_cursor_3d: return
         cursor_pos = BlUtil.Scene.cursor(context)
         xy = self.sv.project(cursor_pos)
         if not xy: return
@@ -1512,419 +1320,6 @@ class Operator_Align_View_To_Workplane:
             return {'FINISHED'}
         
         return {'RUNNING_MODAL'}
-
-@addon.Menu(label="Mode")
-class VIEW3D_PIE_bbox_transform_mode:
-    def draw(self, context):
-        layout = self.layout
-        pie = layout.menu_pie()
-        pie.operator_context = 'INVOKE_REGION_WIN' # is this necessary?
-        pie.operator("view3d.bbox_transform_execute", text="Scale", icon='MAN_SCALE').mode = 'SCALE'
-        pie.operator("view3d.bbox_transform_execute", text="Rotate", icon='MAN_ROT').mode = 'ROTATE'
-
-@addon.Operator(idname="view3d.bbox_transform_execute", options={'BLOCKING'}, description=
-"Execute Bounding Box Transform")
-class Operator_BBox_Transform_Execute:
-    mode = 'SCALE' | prop(items=[('SCALE', "Scale"), ('ROTATE', "Rotate")])
-    
-    constraint_axis = (False, False, False)
-    cursor_location = Vector()
-    old_cursor_location = Vector()
-    
-    def invoke(self, context, event):
-        v3d = context.space_data
-        ts = context.tool_settings
-        
-        old_cursor_location = Vector(self.old_cursor_location)
-        old_pivot_point = v3d.pivot_point
-        def restore_pivot(*args):
-            v3d.cursor_location = old_cursor_location
-            v3d.pivot_point = old_pivot_point
-        UIMonitor.on_next_update.append(restore_pivot)
-        
-        v3d.cursor_location = Vector(self.cursor_location)
-        v3d.pivot_point = 'CURSOR'
-        
-        execution_context = 'INVOKE_REGION_WIN' # INVOKE_DEFAULT seems to not work as expected here
-        op_args = dict(
-            constraint_axis=self.constraint_axis,
-            constraint_orientation=v3d.transform_orientation,
-            proportional=ts.proportional_edit,
-            proportional_edit_falloff=ts.proportional_edit_falloff,
-            proportional_size=ts.proportional_size,
-        )
-        
-        if self.mode == 'SCALE':
-            return bpy.ops.transform.resize(execution_context, **op_args)
-        else:
-            return bpy.ops.transform.rotate(execution_context, **op_args)
-
-@addon.Operator(idname="view3d.bbox_transform", options={'BLOCKING'}, description=
-"Bounding Box Transform")
-class Operator_BBox_Transform:
-    mode = 'SCALE' | prop(items=[('SCALE', "Scale"), ('ROTATE', "Rotate")])
-    coordsystem = 'MANIPULATOR' | prop()
-    
-    lines_template = [
-        ((0,0,0), (1,0,0)),
-        ((1,0,0), (1,1,0)),
-        ((1,1,0), (0,1,0)),
-        ((0,1,0), (0,0,0)),
-        
-        ((0,0,1), (1,0,1)),
-        ((1,0,1), (1,1,1)),
-        ((1,1,1), (0,1,1)),
-        ((0,1,1), (0,0,1)),
-        
-        ((0,0,0), (0,0,1)),
-        ((1,0,0), (1,0,1)),
-        ((1,1,0), (1,1,1)),
-        ((0,1,0), (0,1,1)),
-    ]
-    
-    def invoke(self, context, event):
-        csm = CoordSystemMatrix(self.coordsystem, context=context)
-        self.matrix = csm.final_matrix()
-        self.bbox = BlUtil.Selection.bounding_box(context, self.matrix)
-        self.bbox_origin = self.bbox[0]
-        self.bbox_delta = ((self.bbox[1] - self.bbox[0]) if self.bbox[0] is not None else Vector())
-        if max(self.bbox_delta) < 1e-6: return {'CANCELLED'}
-        
-        m = self.matrix
-        m3 = m.to_3x3()
-        self.origin = m * self.bbox_origin
-        self.dir_x = m3 * Vector((self.bbox_delta.x, 0, 0))
-        self.dir_y = m3 * Vector((0, self.bbox_delta.y, 0))
-        self.dir_z = m3 * Vector((0, 0, self.bbox_delta.z))
-        self.pm = matrix_compose(self.dir_x, self.dir_y, self.dir_z, self.origin)
-        self.pm_inv = matrix_inverted_safe(self.pm)
-        
-        self.reaction_distance = 5.0
-        self.search_result = (0,0,0)
-        self.line_proj = None
-        
-        def int_round_vector(v):
-            return (int(round(v.x)), int(round(v.y)), int(round(v.z)))
-        
-        self.points = []
-        for iz in (0.0, 1.0):
-            for iy in (0.0, 1.0):
-                for ix in (0.0, 1.0):
-                    p = (ix, iy, iz)
-                    n = (ix*2-1, iy*2-1, iz*2-1)
-                    p_abs = self.getpoint(p)
-                    self.points.append((p, n, p_abs))
-        
-        for i in (0, 1, 2):
-            for s in (-1, 1):
-                n = Vector()
-                n[i] = s
-                p = Vector((0.5, 0.5, 0.5)) + (n * 0.5)
-                n = int_round_vector(n)
-                p_abs = self.getpoint(p)
-                self.points.append((p, n, p_abs))
-        
-        self.lines = []
-        for p0, p1 in self.lines_template:
-            pmid = (Vector(p0) + Vector(p1)) * 0.5
-            pd = (pmid - Vector((0.5, 0.5, 0.5)))*2
-            n = int_round_vector(pd)
-            p0_abs = self.getpoint(p0)
-            p1_abs = self.getpoint(p1)
-            self.lines.append((p0, p1, n, p0_abs, p1_abs))
-        
-        v3d_regions = []
-        v3d_spaces = {}
-        for area in context.screen.areas:
-            if area.type != 'VIEW_3D': continue
-            v3d_regions.extend(region for region in area.regions if region.type == 'WINDOW')
-            for space in area.spaces:
-                if space.type != 'VIEW_3D': continue
-                v3d_spaces[space] = dict(
-                    show_manipulator = space.show_manipulator,
-                    cursor_location = Vector(space.cursor_location), # e.g. if it's in the Local View mode
-                )
-                space.show_manipulator = False
-        self.v3d_spaces = v3d_spaces
-        self.v3d_regions = v3d_regions
-        
-        v3d = context.space_data
-        v3d.cursor_location = self.getpoint(Vector((0.5, 0.5, 0.5)))
-        
-        UIMonitor.update(context, event)
-        self.update_sv(event)
-        
-        addon.view3d_draw('POST_VIEW', owner=self)(self.draw_view)
-        addon.view3d_draw('POST_PIXEL', owner=self)(self.draw_px)
-        context.window_manager.modal_handler_add(self)
-        self.tag_redraw()
-        return {'RUNNING_MODAL'}
-    
-    def modal(self, context, event):
-        UIMonitor.update(context, event)
-        
-        if event.value == 'PRESS':
-            confirm = (event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'})
-            cancel = not confirm
-            pass_through = (event.type not in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER', 'ESC', 'RIGHTMOUSE'})
-        else:
-            confirm = False
-            cancel = False
-            pass_through = False
-        
-        if 'MOUSEMOVE' in event.type:
-            self.update_sv(event)
-            if self.sv:
-                v3d = self.sv.space_data
-                cp = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
-                v3d.cursor_location = self.getpoint(cp)
-            self.tag_redraw()
-        
-        if cancel or confirm:
-            addon.remove_matches(owner=self)
-            self.restore_states()
-            self.tag_redraw()
-            
-            if confirm and self.sv:
-                if event.type == 'LEFTMOUSE': # if pressed Enter, just keep the cursor position
-                    v3d = self.sv.space_data
-                    ts = context.tool_settings
-                    
-                    # TODO: instead of standard pie menu, draw a custom one?
-                    # (when a menu is invoked, this operator ends, which means bbox is no longer rendered)
-                    
-                    old_cursor_location = self.v3d_spaces[v3d]["cursor_location"]
-                    
-                    cp = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
-                    new_cursor_location = self.getpoint(cp)
-                    
-                    """
-                    old_pivot_point = v3d.pivot_point
-                    def restore_pivot(*args):
-                        v3d.cursor_location = old_cursor_location
-                        v3d.pivot_point = old_pivot_point
-                    UIMonitor.on_next_update.append(restore_pivot)
-                    
-                    v3d.cursor_location = new_cursor_location
-                    v3d.pivot_point = 'CURSOR'
-                    """
-                    
-                    bbox_exec = Operator_BBox_Transform_Execute
-                    bbox_exec.constraint_axis = tuple((s != 0) for s in self.search_result)
-                    bbox_exec.cursor_location = new_cursor_location
-                    bbox_exec.old_cursor_location = old_cursor_location
-                    
-                    # TODO: 2.70 does not support pie menus!
-                    bpy.ops.wm.call_menu_pie('INVOKE_REGION_WIN', name="VIEW3D_PIE_bbox_transform_mode")
-                    
-                    """
-                    constraint_axis = tuple((s != 0) for s in self.search_result)
-                    execution_context = 'INVOKE_REGION_WIN' # INVOKE_DEFAULT seems to not work as expected here
-                    op_args = dict(
-                        constraint_axis=constraint_axis,
-                        constraint_orientation=v3d.transform_orientation,
-                        proportional=ts.proportional_edit,
-                        proportional_edit_falloff=ts.proportional_edit_falloff,
-                        proportional_size=ts.proportional_size,
-                    )
-                    if self.mode == 'SCALE':
-                        bpy.ops.transform.resize(execution_context, **op_args)
-                    else:
-                        bpy.ops.transform.rotate(execution_context, **op_args)
-                    """
-                
-                result = {'FINISHED'}
-            else:
-                if self.sv:
-                    v3d = self.sv.space_data
-                    old_cursor_location = self.v3d_spaces[v3d]["cursor_location"]
-                    v3d.cursor_location = old_cursor_location
-                
-                result = ({'CANCELLED', 'PASS_THROUGH'} if pass_through else {'CANCELLED'})
-            
-            return result
-        
-        return {'RUNNING_MODAL'}
-    
-    def getpoint(self, p):
-        return self.pm * Vector(p)
-    
-    def tag_redraw(self):
-        for region in self.v3d_regions:
-            region.tag_redraw()
-    
-    def restore_states(self):
-        for space, states in self.v3d_spaces.items():
-            for k, v in states.items():
-                setattr(space, k, v)
-    
-    def update_sv(self, event):
-        self.mouse = Vector((event.mouse_x, event.mouse_y))
-        self.sv = SmartView3D((self.mouse.x, self.mouse.y, 0))
-        
-        self.search_result = (0,0,0)
-        self.line_proj = None
-        
-        if self.sv:
-            self.search_points()
-            self.search_lines()
-    
-    def search_points(self):
-        sv = self.sv
-        mpos = sv.convert_ui_coord(self.mouse, 'WINDOW', 'REGION')
-        view_dir = sv.forward
-        
-        best_dist = float("inf")
-        best_n = (0,0,0)
-        for p, n, p_abs in self.points:
-            xy_proj = sv.project(p_abs)
-            if not xy_proj: continue
-            if (mpos - xy_proj).magnitude <= self.reaction_distance:
-                dist = p_abs.dot(view_dir)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_n = n
-        
-        self.search_result = best_n
-    
-    def search_lines(self):
-        if self.search_result != (0,0,0): return
-        sv = self.sv
-        mpos = sv.convert_ui_coord(self.mouse, 'WINDOW', 'REGION')
-        view_dir = sv.forward
-        
-        def dist_to_segment_2d(p, a, b):
-            l2 = (b - a).length_squared
-            if l2 == 0.0: return (p - a).magnitude
-            t = min(max((p - a).dot(b - a) / l2, 0.0), 1.0)
-            return (a.lerp(b, t) - p).magnitude
-        
-        best_dist = float("inf")
-        best_n = (0,0,0)
-        for p0, p1, n, p0_abs, p1_abs in self.lines:
-            if view_dir.dot(p1_abs) < view_dir.dot(p0_abs): p0_abs, p1_abs = p1_abs, p0_abs
-            
-            # make sure we deal with the "visible" part of the line
-            plane_near = sv.z_plane(0)
-            p_near = mathutils.geometry.intersect_line_plane(p0_abs, p1_abs, plane_near[0], plane_near[1])
-            if p_near: # TODO: sv.clip(line/polygon) - returns clipped line/polygon ?
-                pd_abs = p1_abs - p0_abs
-                t = ((p_near - p0_abs).normalized()).dot(pd_abs.normalized())
-                if (t >= 0) and (t <= 1):
-                    p0_abs = p0_abs + pd_abs * t
-            
-            xy0_proj = sv.project(p0_abs)
-            if not xy0_proj: continue
-            xy1_proj = sv.project(p1_abs)
-            if not xy1_proj: continue
-            
-            if dist_to_segment_2d(mpos, xy0_proj, xy1_proj) <= self.reaction_distance:
-                dist = p0_abs.dot(view_dir)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_n = n
-                    self.line_proj = (xy0_proj, xy1_proj)
-        
-        self.search_result = best_n
-    
-    def draw_view(self):
-        prefs = addon.preferences
-        c_WP = prefs.workplane_color
-        c_LS = prefs.workplane_lines10_color
-        
-        def drawline(batch, p0, p1):
-            batch.vertex(*self.getpoint(p0))
-            batch.vertex(*self.getpoint(p1))
-        
-        def drawquad(batch, p0, p1, p2, p3):
-            batch.vertex(*self.getpoint(p0))
-            batch.vertex(*self.getpoint(p1))
-            batch.vertex(*self.getpoint(p2))
-            batch.vertex(*self.getpoint(p0))
-            batch.vertex(*self.getpoint(p2))
-            batch.vertex(*self.getpoint(p3))
-        
-        with cgl(DepthMask=0, DEPTH_TEST=True, BLEND=True, CULL_FACE=False):
-            cgl.Color = (c_WP[0], c_WP[1], c_WP[2], c_WP[3])
-            with cgl.batch('TRIANGLES') as batch:
-                drawquad(batch, (0,0,0), (1,0,0), (1,1,0), (0,1,0))
-                drawquad(batch, (0,0,1), (1,0,1), (1,1,1), (0,1,1))
-                
-                drawquad(batch, (0,0,0), (1,0,0), (1,0,1), (0,0,1))
-                drawquad(batch, (0,1,0), (1,1,0), (1,1,1), (0,1,1))
-                
-                drawquad(batch, (0,0,0), (0,1,0), (0,1,1), (0,0,1))
-                drawquad(batch, (1,0,0), (1,1,0), (1,1,1), (1,0,1))
-        
-        with cgl(LineWidth=1, DepthMask=0, DEPTH_TEST=True, BLEND=True, LINE_STIPPLE=True):
-            cgl.Color = (c_LS[0], c_LS[1], c_LS[2], c_LS[3])
-            with cgl.batch('LINES') as batch:
-                for p0, p1, n, p0_abs, p1_abs in self.lines:
-                    drawline(batch, p0, p1)
-    
-    def draw_px(self):
-        if not self.sv: return
-        sv = self.sv
-        
-        if bpy.context.region != sv.region: return
-        
-        cgl.Matrix_ModelView = cgl.Matrix_ModelView_3D
-        cgl.Matrix_Projection = cgl.Matrix_Projection_3D
-        
-        prefs = addon.preferences
-        c_WP = prefs.workplane_color
-        c_LS = prefs.workplane_lines_color
-        
-        view_dir = sv.forward
-        
-        radius = self.reaction_distance
-        
-        def drawline(batch, p0, p1):
-            batch.vertex(*self.getpoint(p0))
-            batch.vertex(*self.getpoint(p1))
-        
-        with cgl(LineWidth=1, DepthMask=0, DEPTH_TEST=False, BLEND=True, LINE_STIPPLE=True):
-            cgl.Color = (c_LS[0], c_LS[1], c_LS[2], c_LS[3]*0.35)
-            with cgl.batch('LINES') as batch:
-                for p0, p1, n, p0_abs, p1_abs in self.lines:
-                    drawline(batch, p0, p1)
-            
-            if self.search_result != (0,0,0):
-                cgl.Color = (0.0, 1.0, 0.0, 0.75)
-                p0 = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
-                p1 = (Vector((0.5, 0.5, 0.5)) + Vector(self.search_result) * 0.5)
-                with cgl.batch('LINES') as batch:
-                    drawline(batch, p0, p1)
-        
-        cgl.Matrix_ModelView = cgl.Matrix_ModelView_2D
-        cgl.Matrix_Projection = cgl.Matrix_Projection_2D
-        
-        with cgl(DepthMask=0, DEPTH_TEST=False, BLEND=True):
-            for p, n, p_abs in self.points:
-                xy_proj = sv.project(p_abs)
-                if not xy_proj: continue
-                if n == self.search_result:
-                    cgl.Color = (0.0, 1.0, 0.0, 0.75)
-                else:
-                    cgl.Color = (0.5, 0.0, 0.0, 0.75)
-                with cgl.batch('POLYGON') as batch:
-                    batch.sequence(batch.circle(xy_proj, radius, resolution=16))
-            
-            for p0, p1, n, p0_abs, p1_abs in self.lines:
-                if (n == self.search_result) and self.line_proj:
-                    cgl.Color = (0.0, 1.0, 0.0, 0.5)
-                    with cgl.batch('POLYGON') as batch:
-                        xy0_proj, xy1_proj = self.line_proj
-                        xy_n = (xy1_proj - xy0_proj).normalized()
-                        if xy_n.magnitude < 0.5: xy_n = Vector((0,1))
-                        xy_ort = orthogonal(xy_n)
-                        m = Matrix((xy_ort, xy_n))
-                        pi2 = math.pi / 2.0
-                        for xy in batch.circle((0,0), radius, resolution=16, start=-3*pi2, end=-pi2):
-                            batch.vertex(*(m * Vector(xy) + xy0_proj))
-                        for xy in batch.circle((0,0), radius, resolution=16, start=-pi2, end=pi2):
-                            batch.vertex(*(m * Vector(xy) + xy1_proj))
-                    break
 
 @addon.PropertyGroup
 class CursorPG:
@@ -2016,7 +1411,9 @@ class CursorPG:
             with layout.column(True):
                 with layout.row(True):
                     self.attach_info.draw(layout)
-                    layout.operator("view3d.transform_tools_raycast", text="", icon='SNAP_NORMAL')
+                    op = layout.operator("view3d.transform_snap", text="", icon='SNAP_NORMAL')
+                    op.mode = 'CURSOR'
+                    op.use_snap = True
                 
                 layout.prop(self, "location", text="")
     
@@ -2223,7 +1620,9 @@ class RefpointPG:
         with layout.column(True):
             with layout.row(True):
                 self.attach_info.draw(layout, self.inherit, self.attach_info_inherited)
-                layout.operator("view3d.transform_tools_raycast", text="", icon='SNAP_NORMAL')
+                op = layout.operator("view3d.transform_snap", text="", icon='SNAP_NORMAL')
+                op.mode = 'REFPOINT'
+                op.use_snap = True
             
             layout.prop(self, "location", text="")
 
@@ -2434,14 +1833,1444 @@ class RefpointsPG:
     
     del draw_px
 
+@addon.Operator(idname="view3d.bbox_transform", options={'BLOCKING'}, description=
+"Bounding Box Transform")
+class Operator_BBox_Transform:
+    mode = 'LAST' | prop(items=[('LAST', "Last used"), ('SCALE', "Scale"), ('ROTATE', "Rotate")])
+    coordsystem = 'MANIPULATOR' | prop()
+    
+    lines_template = [
+        ((0,0,0), (1,0,0)),
+        ((1,0,0), (1,1,0)),
+        ((1,1,0), (0,1,0)),
+        ((0,1,0), (0,0,0)),
+        
+        ((0,0,1), (1,0,1)),
+        ((1,0,1), (1,1,1)),
+        ((1,1,1), (0,1,1)),
+        ((0,1,1), (0,0,1)),
+        
+        ((0,0,0), (0,0,1)),
+        ((1,0,0), (1,0,1)),
+        ((1,1,0), (1,1,1)),
+        ((0,1,0), (0,1,1)),
+    ]
+    
+    last_mode = 'SCALE'
+    mode_offset = 3.0
+    mode_radius = 6.0
+    
+    def invoke(self, context, event):
+        csm = CoordSystemMatrix(self.coordsystem, context=context)
+        self.matrix = csm.final_matrix()
+        self.bbox = BlUtil.Selection.bounding_box(context, self.matrix) # TODO: dupli objects, local view
+        self.bbox_origin = self.bbox[0]
+        self.bbox_delta = ((self.bbox[1] - self.bbox[0]) if self.bbox[0] is not None else Vector())
+        if max(self.bbox_delta) < 1e-6: return {'CANCELLED'}
+        
+        if self.mode == 'LAST': self.mode = self.last_mode
+        
+        m = self.matrix
+        m3 = m.to_3x3()
+        self.origin = m * self.bbox_origin
+        self.dir_x = m3 * Vector((self.bbox_delta.x, 0, 0))
+        self.dir_y = m3 * Vector((0, self.bbox_delta.y, 0))
+        self.dir_z = m3 * Vector((0, 0, self.bbox_delta.z))
+        self.pm = matrix_compose(self.dir_x, self.dir_y, self.dir_z, self.origin)
+        self.pm_inv = matrix_inverted_safe(self.pm)
+        
+        self.reaction_distance = 5.0
+        self.search_result = (0,0,0)
+        self.line_proj = None
+        
+        def int_round_vector(v):
+            return (int(round(v.x)), int(round(v.y)), int(round(v.z)))
+        
+        self.points = []
+        for iz in (0.0, 1.0):
+            for iy in (0.0, 1.0):
+                for ix in (0.0, 1.0):
+                    p = (ix, iy, iz)
+                    n = (ix*2-1, iy*2-1, iz*2-1)
+                    p_abs = self.getpoint(p)
+                    self.points.append((p, n, p_abs))
+        
+        for i in (0, 1, 2):
+            for s in (-1, 1):
+                n = Vector()
+                n[i] = s
+                p = Vector((0.5, 0.5, 0.5)) + (n * 0.5)
+                n = int_round_vector(n)
+                p_abs = self.getpoint(p)
+                self.points.append((p, n, p_abs))
+        
+        self.lines = []
+        for p0, p1 in self.lines_template:
+            pmid = (Vector(p0) + Vector(p1)) * 0.5
+            pd = (pmid - Vector((0.5, 0.5, 0.5)))*2
+            n = int_round_vector(pd)
+            p0_abs = self.getpoint(p0)
+            p1_abs = self.getpoint(p1)
+            self.lines.append((p0, p1, n, p0_abs, p1_abs))
+        
+        v3d_regions = []
+        v3d_spaces = {}
+        for area in context.screen.areas:
+            if area.type != 'VIEW_3D': continue
+            v3d_regions.extend(region for region in area.regions if region.type == 'WINDOW')
+            for space in area.spaces:
+                if space.type != 'VIEW_3D': continue
+                v3d_spaces[space] = dict(
+                    show_manipulator = space.show_manipulator,
+                    cursor_location = Vector(space.cursor_location), # e.g. if it's in the Local View mode
+                )
+                space.show_manipulator = False
+        self.v3d_spaces = v3d_spaces
+        self.v3d_regions = v3d_regions
+        
+        v3d = context.space_data
+        v3d.cursor_location = self.getpoint(Vector((0.5, 0.5, 0.5)))
+        
+        self.show_mode_menu = False
+        
+        UIMonitor.update(context, event)
+        self.update_sv(event)
+        
+        addon.view3d_draw('POST_VIEW', owner=self)(self.draw_view)
+        addon.view3d_draw('POST_PIXEL', owner=self)(self.draw_px)
+        context.window_manager.modal_handler_add(self)
+        self.tag_redraw()
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        UIMonitor.update(context, event)
+        
+        confirm_keys = {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'}
+        cancel_keys = {'ESC', 'RIGHTMOUSE'}
+        confirm = False
+        cancel = False
+        pass_through = False
+        
+        if 'MOUSEMOVE' in event.type: # can generate PRESS/RELEASE events!
+            if self.show_mode_menu:
+                self.update_mode_menu(event)
+            else:
+                self.update_sv(event)
+                if self.sv:
+                    v3d = self.sv.space_data
+                    cp = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
+                    v3d.cursor_location = self.getpoint(cp)
+            self.tag_redraw()
+        elif event.value == 'PRESS':
+            cancel = not (event.type in confirm_keys)
+            if not cancel: self.show_mode_menu = True
+            pass_through = not ((event.type in confirm_keys) or (event.type in cancel_keys))
+            self.tag_redraw()
+        elif event.value == 'RELEASE':
+            confirm = (event.type in confirm_keys) and self.show_mode_menu
+            self.tag_redraw()
+        
+        if cancel or confirm:
+            addon.remove_matches(owner=self)
+            self.restore_states()
+            self.tag_redraw()
+            
+            if confirm and self.sv:
+                if event.type == 'LEFTMOUSE': # if pressed Enter, just keep the cursor position
+                    v3d = self.sv.space_data
+                    ts = context.tool_settings
+                    
+                    self.__class__.last_mode = self.mode
+                    
+                    old_cursor_location = self.v3d_spaces[v3d]["cursor_location"]
+                    cp = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
+                    new_cursor_location = self.getpoint(cp)
+                    
+                    old_pivot_point = v3d.pivot_point
+                    def restore_pivot(*args):
+                        v3d.cursor_location = old_cursor_location
+                        v3d.pivot_point = old_pivot_point
+                    UIMonitor.on_next_update.append(restore_pivot)
+                    
+                    v3d.cursor_location = new_cursor_location
+                    v3d.pivot_point = 'CURSOR'
+                    
+                    constraint_axis = tuple((s != 0) for s in self.search_result)
+                    execution_context = 'INVOKE_REGION_WIN' # INVOKE_DEFAULT seems to not work as expected here
+                    op_args = dict(
+                        constraint_axis=constraint_axis,
+                        constraint_orientation=v3d.transform_orientation,
+                        proportional=ts.proportional_edit,
+                        proportional_edit_falloff=ts.proportional_edit_falloff,
+                        proportional_size=ts.proportional_size,
+                    )
+                    if self.mode == 'SCALE':
+                        bpy.ops.transform.resize(execution_context, **op_args)
+                    else:
+                        bpy.ops.transform.rotate(execution_context, **op_args)
+                
+                result = {'FINISHED'}
+            else:
+                if self.sv:
+                    v3d = self.sv.space_data
+                    old_cursor_location = self.v3d_spaces[v3d]["cursor_location"]
+                    v3d.cursor_location = old_cursor_location
+                
+                result = ({'CANCELLED', 'PASS_THROUGH'} if pass_through else {'CANCELLED'})
+            
+            return result
+        
+        return {'RUNNING_MODAL'}
+    
+    def getpoint(self, p):
+        return self.pm * Vector(p)
+    
+    def tag_redraw(self):
+        for region in self.v3d_regions:
+            region.tag_redraw()
+    
+    def restore_states(self):
+        for space, states in self.v3d_spaces.items():
+            for k, v in states.items():
+                setattr(space, k, v)
+    
+    def update_mode_menu(self, event):
+        margin = self.mode_radius - self.mode_offset
+        if self.mode == 'ROTATE': margin = -margin
+        x_threshold = self.mouse.x + margin
+        if event.mouse_x > x_threshold:
+            self.mode = 'ROTATE'
+        else:
+            self.mode = 'SCALE'
+    
+    def update_sv(self, event):
+        self.mouse = Vector((event.mouse_x, event.mouse_y))
+        self.sv = SmartView3D((self.mouse.x, self.mouse.y, 0))
+        
+        self.search_result = (0,0,0)
+        self.line_proj = None
+        
+        if self.sv:
+            self.search_points()
+            self.search_lines()
+    
+    def search_points(self):
+        sv = self.sv
+        mpos = sv.convert_ui_coord(self.mouse, 'WINDOW', 'REGION')
+        view_dir = sv.forward
+        
+        best_dist = float("inf")
+        best_n = (0,0,0)
+        for p, n, p_abs in self.points:
+            xy_proj = sv.project(p_abs)
+            if not xy_proj: continue
+            if (mpos - xy_proj).magnitude <= self.reaction_distance:
+                dist = p_abs.dot(view_dir)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_n = n
+        
+        self.search_result = best_n
+    
+    def search_lines(self):
+        if self.search_result != (0,0,0): return
+        sv = self.sv
+        mpos = sv.convert_ui_coord(self.mouse, 'WINDOW', 'REGION')
+        view_dir = sv.forward
+        
+        plane_near = sv.z_plane(0)
+        
+        best_dist = float("inf")
+        best_n = (0,0,0)
+        for p0, p1, n, p0_abs, p1_abs in self.lines:
+            pm_abs = (p0_abs + p1_abs) * 0.5
+            
+            # make sure we deal with the "visible" part of the line
+            clipped = clip_primitive([p0_abs, p1_abs], plane_near)
+            if not clipped: continue
+            p0_abs, p1_abs = clipped
+            
+            xy0_proj = sv.project(p0_abs)
+            if not xy0_proj: continue
+            xy1_proj = sv.project(p1_abs)
+            if not xy1_proj: continue
+            
+            if dist_to_segment(mpos, xy0_proj, xy1_proj) <= self.reaction_distance:
+                dist = pm_abs.dot(view_dir)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_n = n
+                    self.line_proj = (xy0_proj, xy1_proj)
+        
+        self.search_result = best_n
+    
+    def draw_view(self):
+        prefs = addon.preferences
+        c_WP = prefs.workplane_color
+        c_LS = prefs.workplane_lines10_color
+        
+        def drawline(batch, p0, p1):
+            batch.vertex(*self.getpoint(p0))
+            batch.vertex(*self.getpoint(p1))
+        
+        def drawquad(batch, p0, p1, p2, p3):
+            batch.vertex(*self.getpoint(p0))
+            batch.vertex(*self.getpoint(p1))
+            batch.vertex(*self.getpoint(p2))
+            batch.vertex(*self.getpoint(p0))
+            batch.vertex(*self.getpoint(p2))
+            batch.vertex(*self.getpoint(p3))
+        
+        with cgl(DepthMask=0, DEPTH_TEST=True, BLEND=True, CULL_FACE=False):
+            cgl.Color = (c_WP[0], c_WP[1], c_WP[2], c_WP[3])
+            with cgl.batch('TRIANGLES') as batch:
+                drawquad(batch, (0,0,0), (1,0,0), (1,1,0), (0,1,0))
+                drawquad(batch, (0,0,1), (1,0,1), (1,1,1), (0,1,1))
+                
+                drawquad(batch, (0,0,0), (1,0,0), (1,0,1), (0,0,1))
+                drawquad(batch, (0,1,0), (1,1,0), (1,1,1), (0,1,1))
+                
+                drawquad(batch, (0,0,0), (0,1,0), (0,1,1), (0,0,1))
+                drawquad(batch, (1,0,0), (1,1,0), (1,1,1), (1,0,1))
+        
+        with cgl(LineWidth=1, DepthMask=0, DEPTH_TEST=True, BLEND=True, LINE_STIPPLE=True):
+            cgl.Color = (c_LS[0], c_LS[1], c_LS[2], c_LS[3])
+            with cgl.batch('LINES') as batch:
+                for p0, p1, n, p0_abs, p1_abs in self.lines:
+                    drawline(batch, p0, p1)
+    
+    def draw_px(self):
+        if not self.sv: return
+        sv = self.sv
+        
+        if bpy.context.region != sv.region: return
+        
+        cgl.Matrix_ModelView = cgl.Matrix_ModelView_3D
+        cgl.Matrix_Projection = cgl.Matrix_Projection_3D
+        
+        prefs = addon.preferences
+        c_WP = prefs.workplane_color
+        c_LS = prefs.workplane_lines_color
+        
+        view_dir = sv.forward
+        
+        radius = self.reaction_distance
+        
+        def drawline(batch, p0, p1):
+            batch.vertex(*self.getpoint(p0))
+            batch.vertex(*self.getpoint(p1))
+        
+        with cgl(LineWidth=1, DepthMask=0, DEPTH_TEST=False, BLEND=True, LINE_STIPPLE=True):
+            cgl.Color = (c_LS[0], c_LS[1], c_LS[2], c_LS[3]*0.35)
+            with cgl.batch('LINES') as batch:
+                for p0, p1, n, p0_abs, p1_abs in self.lines:
+                    drawline(batch, p0, p1)
+            
+            if self.search_result != (0,0,0):
+                cgl.Color = (0.0, 1.0, 0.0, 0.75)
+                p0 = (Vector((0.5, 0.5, 0.5)) - Vector(self.search_result) * 0.5)
+                p1 = (Vector((0.5, 0.5, 0.5)) + Vector(self.search_result) * 0.5)
+                with cgl.batch('LINES') as batch:
+                    drawline(batch, p0, p1)
+        
+        cgl.Matrix_ModelView = cgl.Matrix_ModelView_2D
+        cgl.Matrix_Projection = cgl.Matrix_Projection_2D
+        
+        with cgl(DepthMask=0, DEPTH_TEST=False, BLEND=True):
+            for p, n, p_abs in self.points:
+                xy_proj = sv.project(p_abs)
+                if not xy_proj: continue
+                if n == self.search_result:
+                    cgl.Color = (0.0, 1.0, 0.0, 0.75)
+                else:
+                    cgl.Color = (0.5, 0.0, 0.0, 0.75)
+                with cgl.batch('POLYGON') as batch:
+                    batch.sequence(batch.circle(xy_proj, radius, resolution=16))
+            
+            for p0, p1, n, p0_abs, p1_abs in self.lines:
+                if (n == self.search_result) and self.line_proj:
+                    cgl.Color = (0.0, 1.0, 0.0, 0.5)
+                    with cgl.batch('POLYGON') as batch:
+                        batch.sequence(batch.rounded_primitive(self.line_proj, radius, resolution=2.0))
+                    break
+            
+            if self.show_mode_menu:
+                txt_kwargs = dict(text=(1.0, 1.0, 1.0, 1.0), background=(0,0,0,0.5), radius=self.mode_radius)
+                outline0 = (1.0, 1.0, 0.0, 0.25)
+                outline1 = (1.0, 1.0, 0.0, 1.0)
+                pos = sv.convert_ui_coord(self.mouse, 'WINDOW', 'REGION')
+                
+                is_scale = (self.mode == 'SCALE')
+                
+                if is_scale:
+                    cgl.text.compile(" Rotate").draw(pos+Vector((self.mode_offset+2, 0)), (0.0, 0.5), outline=outline0, **txt_kwargs)
+                    cgl.text.compile("Scale ").draw(pos+Vector((-self.mode_offset+1, 0)), (1.0, 0.5), outline=outline1, **txt_kwargs)
+                else: # change draw order
+                    cgl.text.compile("Scale ").draw(pos+Vector((-self.mode_offset+1, 0)), (1.0, 0.5), outline=outline0, **txt_kwargs)
+                    cgl.text.compile(" Rotate").draw(pos+Vector((self.mode_offset+2, 0)), (0.0, 0.5), outline=outline1, **txt_kwargs)
+
+@addon.Operator(idname="view3d.transform_snap", options={'BLOCKING'}, description=
+"Transform/Snap")
+class Operator_Transform_Snap:
+    mode = 'CURSOR' | prop(items=['CURSOR', 'WORKPLANE', 'REFPOINT'])
+    use_snap = False | prop()
+    
+    def invoke(self, context, event):
+        self.active_mode = None
+        self.switch_mode(context, self.mode)
+        
+        self.invoke_event_type = event.type
+        self.invoke_event_value = event.value
+        
+        scene = context.scene
+        self.scene = scene
+        
+        tfm_tools = get_transform_tools(context)
+        self.tfm_tools = tfm_tools
+        
+        self.invert_snap = False
+        self.special_snap = False
+        self.alternate_snap = False
+        
+        self.snap_precise = ('PRECISE' in tfm_tools.snap_options)
+        self.snap_loose = ('LOOSE' in tfm_tools.snap_options)
+        self.snap_midpoints = ('MIDPOINTS' in tfm_tools.snap_options)
+        self.snap_solid_only = ('SOLID_ONLY' in tfm_tools.snap_options)
+        self.snap_objects = set(tfm_tools.snap_objects)
+        self.snap_origins = ('ORIGIN' in tfm_tools.snap_objects)
+        self.snap_bboxes = ('BBOX' in tfm_tools.snap_objects)
+        self.snap_dupli = ('DUPLI' in tfm_tools.snap_objects)
+        self.snap_elements = set(tfm_tools.snap_elements)
+        self.snap_normal_swizzle = tfm_tools.snap_normal_swizzle
+        
+        self.snap_bbox = False
+        
+        self.mesh_bakers = {}
+        self.kd_last_rv3d = None
+        self.kd_origins = None
+        self.kd_bboxes = None
+        
+        self.sv = None
+        
+        self.snap_draw_type = None
+        self.snap_draw_verts = []
+        self.snap_draw_tris = []
+        self.snap_draw_bbox = None
+        self.snap_obj_matrix = None
+        self.snapped_to_obj = False
+        
+        UIMonitor.update(context, event)
+        
+        mouse = Vector((event.mouse_x, event.mouse_y))
+        self.update_sv(context, mouse)
+        
+        #addon.view3d_draw('POST_VIEW', owner=self)(self.draw_view)
+        addon.view3d_draw('POST_PIXEL', owner=self)(self.draw_px)
+        #context.window.cursor_modal_set('EYEDROPPER')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+    
+    @staticmethod
+    def toggle_set(items, item):
+        if item in items:
+            items.discard(item)
+        else:
+            items.add(item)
+    
+    def process_keypresses(self, context, event):
+        if event.value == 'PRESS':
+            if event.type == 'G':
+                pass # grab/move mode
+            elif event.type == 'R':
+                pass # rotate mode
+            elif event.type == 'S':
+                pass # scale mode
+            elif event.type == 'X':
+                pass # lock x axis
+            elif event.type == 'Y':
+                pass # lock y axis
+            elif event.type == 'Z':
+                pass # lock z axis
+            elif event.type == 'F':
+                self.toggle_set(self.snap_elements, 'FACE')
+            elif event.type == 'E':
+                self.toggle_set(self.snap_elements, 'EDGE')
+            elif event.type == 'V':
+                self.toggle_set(self.snap_elements, 'VERT')
+            elif event.type == 'D':
+                self.toggle_set(self.snap_elements, 'DEPTH')
+            elif event.type == 'F1':
+                self.switch_mode(context, 'CURSOR')
+            elif event.type == 'F2':
+                self.switch_mode(context, 'WORKPLANE')
+            elif event.type == 'F3':
+                self.switch_mode(context, 'REFPOINT')
+    
+    def modal(self, context, event):
+        UIMonitor.update(context, event)
+        
+        if self.invoke_event_type == 'RIGHTMOUSE':
+            cancel = (event.type in {'ESC'})
+        else:
+            cancel = (event.type in {'ESC', 'RIGHTMOUSE'})
+        
+        confirm = (event.type == 'LEFTMOUSE') and (event.value == 'PRESS')
+        if event.type == self.invoke_event_type:
+            confirm |= (event.value == 'RELEASE') and (self.invoke_event_value == 'PRESS')
+        
+        self.invert_snap = event.ctrl
+        self.special_snap = event.shift
+        self.alternate_snap = event.alt
+        
+        mouse = Vector((event.mouse_x, event.mouse_y))
+        if 'MOUSEMOVE' in event.type:
+            self.update_sv(context, mouse)
+        else:
+            self.process_keypresses(context, event)
+        
+        if cancel or confirm:
+            addon.remove_matches(owner=self)
+            #context.window.cursor_modal_restore()
+            
+            self.end(context, cancel, confirm)
+            
+            return ({'FINISHED'} if confirm else {'CANCELLED'})
+        
+        return {'RUNNING_MODAL'}
+    
+    def switch_mode(self, context, new_mode):
+        if self.active_mode == new_mode: return
+        if self.active_mode: self.end(context, cancel=True, confirm=False)
+        self.active_mode = new_mode
+        if self.active_mode: self.init(context)
+    
+    def init(self, context):
+        if not self.active_mode: return
+        getattr(self, self.active_mode.lower()+"_init")(context)
+    
+    def update_snap(self, context, obj, bone, xyzt):
+        if not self.active_mode: return
+        getattr(self, self.active_mode.lower()+"_update_snap")(context, obj, bone, xyzt)
+    
+    def update_free(self, context, mouse):
+        if not self.active_mode: return
+        getattr(self, self.active_mode.lower()+"_update_free")(context, mouse)
+    
+    def end(self, context, cancel, confirm):
+        if not self.active_mode: return
+        getattr(self, self.active_mode.lower()+"_end")(context, cancel, confirm)
+    
+    def cursor_init(self, context):
+        tfm_tools = get_transform_tools(context)
+        cursor = tfm_tools.cursor
+        
+        self.attach_info_obj_name = cursor.attach_info.obj_name
+        self.attach_info_bone_name = cursor.attach_info.bone_name
+        self.attach_info_attach_matrix = cursor.attach_info.matrix
+        
+        self.location_world = cursor.location_get(None, True)
+        self.location_ref = self.location_world
+        
+        cursor_locations = {}
+        for area in context.screen.areas:
+            if area.type != 'VIEW_3D': continue
+            for space in area.spaces:
+                if space.type != 'VIEW_3D': continue
+                cursor_locations[space] = Vector(space.cursor_location)
+        self.cursor_locations = cursor_locations
+        
+        self.visible = cursor.visible
+        cursor.visible = True
+    
+    def cursor_update_snap(self, context, obj, bone, xyzt):
+        if not self.sv: return
+        curr_v3d = self.sv.space_data # not context! context is fixed on operator invoke
+        if curr_v3d.local_view:
+            curr_v3d.cursor_location = xyzt[-1]
+        else:
+            tfm_tools = get_transform_tools(context)
+            cursor = tfm_tools.cursor
+            cursor.attach_info.obj_name = (obj.name if obj else "")
+            cursor.attach_info.bone_name = (bone.name if bone else "")
+            cursor.location_set(self.sv, True, xyzt[-1])
+            self.location_ref = xyzt[-1]
+    
+    def cursor_update_free(self, context, mouse):
+        if not self.sv: return
+        curr_v3d = self.sv.space_data # not context! context is fixed on operator invoke
+        if curr_v3d.local_view:
+            curr_v3d.cursor_location = self.sv.unproject(mouse, curr_v3d.cursor_location, coords='WINDOW')
+        else:
+            tfm_tools = get_transform_tools(context)
+            cursor = tfm_tools.cursor
+            cursor.attach_info.obj_name = ""
+            cursor.attach_info.bone_name = ""
+            cursor.location_set(self.sv, True, self.sv.unproject(mouse, self.location_ref, coords='WINDOW'))
+    
+    def cursor_end(self, context, cancel, confirm):
+        tfm_tools = get_transform_tools(context)
+        cursor = tfm_tools.cursor
+        
+        if cancel:
+            for space, cursor_pos in self.cursor_locations.items():
+                space.cursor_location = cursor_pos
+            
+            cursor.attach_info.obj_name = self.attach_info_obj_name
+            cursor.attach_info.bone_name = self.attach_info_bone_name
+            cursor.attach_info.matrix = self.attach_info_attach_matrix
+            cursor.location_set(None, True, self.location_world)
+        else:
+            curr_v3d = None
+            if self.sv:
+                curr_v3d = self.sv.space_data # not context! context is fixed on operator invoke
+                if curr_v3d.type != 'VIEW_3D': curr_v3d = None
+            
+            # restore all cursor locations except current
+            for space, cursor_pos in self.cursor_locations.items():
+                if space == curr_v3d: continue
+                space.cursor_location = cursor_pos
+            
+            if curr_v3d and curr_v3d.local_view:
+                cursor.attach_info.obj_name = self.attach_info_obj_name
+                cursor.attach_info.bone_name = self.attach_info_bone_name
+                cursor.attach_info.matrix = self.attach_info_attach_matrix
+                cursor.location_set(None, True, self.location_world)
+        
+        cursor.visible = self.visible
+     
+    def workplane_init(self, context):
+        tfm_tools = get_transform_tools(context)
+        workplane = tfm_tools.workplane
+        
+        self.attach_info_obj_name = workplane.attach_info.obj_name
+        self.attach_info_bone_name = workplane.attach_info.bone_name
+        self.attach_info_attach_matrix = workplane.attach_info.matrix
+        
+        self.snap_to_plane = workplane.snap_to_plane
+        self.snap_to_cartesian = workplane.snap_to_cartesian
+        self.snap_to_polar = workplane.snap_to_polar
+        if not workplane.snap_any: workplane.snap_to_cartesian = True
+        
+        self.xyzt = workplane.plane_xyzt
+        self.location_ref = self.xyzt[-1]
+        
+        self.swap_axes = workplane.swap_axes
+        workplane.swap_axes = False
+    
+    def workplane_update_snap(self, context, obj, bone, xyzt):
+        tfm_tools = get_transform_tools(context)
+        workplane = tfm_tools.workplane
+        workplane.attach_info.obj_name = (obj.name if obj else "")
+        workplane.attach_info.bone_name = (bone.name if bone else "")
+        workplane.plane_xyzt = xyzt
+        self.location_ref = xyzt[-1]
+    
+    def workplane_update_free(self, context, mouse):
+        tfm_tools = get_transform_tools(context)
+        workplane = tfm_tools.workplane
+        workplane.attach_info.obj_name = ""
+        workplane.attach_info.bone_name = ""
+        xyzt = list(workplane.plane_xyzt)
+        xyzt[-1] = self.sv.unproject(mouse, self.location_ref, coords='WINDOW')
+        workplane.plane_xyzt = xyzt
+    
+    def workplane_end(self, context, cancel, confirm):
+        tfm_tools = get_transform_tools(context)
+        workplane = tfm_tools.workplane
+        
+        if cancel:
+            workplane.snap_to_plane = self.snap_to_plane
+            workplane.snap_to_cartesian = self.snap_to_cartesian
+            workplane.snap_to_polar = self.snap_to_polar
+            workplane.attach_info.obj_name = self.attach_info_obj_name
+            workplane.attach_info.bone_name = self.attach_info_bone_name
+            workplane.attach_info.matrix = self.attach_info_attach_matrix
+            workplane.plane_xyzt = self.xyzt
+        
+        workplane.swap_axes = self.swap_axes
+    
+    def refpoint_init(self, context):
+        tfm_tools = get_transform_tools(context)
+        refpoints = tfm_tools.refpoints
+        refpoint = refpoints.active
+        if not refpoint:
+            if not refpoints.clusters: refpoints.add_cluster()
+            refpoints.active_id = (0, 0)
+            refpoint = refpoints.active
+        
+        self.attach_info_inherit = refpoint.inherit
+        self.attach_info_options = set(refpoint.attach_info.options) # copy
+        self.attach_info_coordsys_name = refpoint.attach_info.coordsys_name
+        self.attach_info_obj_name = refpoint.attach_info.obj_name
+        self.attach_info_bone_name = refpoint.attach_info.bone_name
+        
+        self.location_world = refpoint.location_world
+        self.location_ref = self.location_world
+        
+        refpoint.inherit = False
+        
+        self.visible = refpoints.visible
+        refpoints.visible = True
+    
+    def refpoint_update_snap(self, context, obj, bone, xyzt):
+        tfm_tools = get_transform_tools(context)
+        refpoints = tfm_tools.refpoints
+        refpoint = refpoints.active
+        
+        refpoint.attach_info.options.discard('CS_ATTACH')
+        
+        refpoint.attach_info.obj_name = (obj.name if obj else "")
+        refpoint.attach_info.bone_name = (bone.name if bone else "")
+        refpoint.location_world = xyzt[-1]
+        self.location_ref = xyzt[-1]
+    
+    def refpoint_update_free(self, context, mouse):
+        tfm_tools = get_transform_tools(context)
+        refpoints = tfm_tools.refpoints
+        refpoint = refpoints.active
+        
+        refpoint.attach_info.obj_name = ""
+        refpoint.attach_info.bone_name = ""
+        refpoint.location_world = self.sv.unproject(mouse, self.location_ref, coords='WINDOW')
+    
+    def refpoint_end(self, context, cancel, confirm):
+        tfm_tools = get_transform_tools(context)
+        refpoints = tfm_tools.refpoints
+        refpoint = refpoints.active
+        
+        if cancel:
+            refpoint.inherit = self.attach_info_inherit
+            refpoint.attach_info.options = self.attach_info_options
+            refpoint.attach_info.coordsys_name = self.attach_info_coordsys_name
+            refpoint.attach_info.obj_name = self.attach_info_obj_name
+            refpoint.attach_info.bone_name = self.attach_info_bone_name
+            refpoint.location_world = self.location_world
+        
+        refpoints.visible = self.visible
+    
+    def update_kd(self, mesh_baker, kd):
+        mesh_baker.update(0.005)
+        if (kd is None) and mesh_baker.finished:
+            verts = mesh_baker.bm.verts
+            if hasattr(verts, "ensure_lookup_table"): verts.ensure_lookup_table()
+            kd = mathutils.kdtree.KDTree(len(verts))
+            for i, v in enumerate(verts):
+                xy = self.sv.project(v.co)
+                if not xy: continue
+                kd.insert((xy[0], xy[1], 0.0), i)
+            kd.balance()
+        return kd
+    
+    def kd_raycast(self, mesh_baker, kd, mouse):
+        raycast_result = RaycastResult()
+        if not mesh_baker: return raycast_result
+        if not kd: return raycast_result
+        mouse = self.sv.convert_ui_coord(mouse, 'WINDOW', 'REGION')
+        mouse = Vector((mouse[0], mouse[1], 0.0))
+        
+        vert_edge_max_dist = 5.0
+        view_dir = self.sv.forward
+        best_dist = float("inf")
+        best_index = None
+        verts = mesh_baker.bm.verts
+        for (co, index, dist) in kd.find_range(mouse, vert_edge_max_dist):
+            v = verts[index]
+            dist = view_dir.dot(v.co)
+            if dist < best_dist:
+                best_dist = dist
+                best_index = index
+        
+        if best_index is not None:
+            v = verts[best_index]
+            location = Vector(v.co)
+            normal = Vector(v.normal)
+            
+            obj, bone, bbox = mesh_baker.vert_to_obj(best_index)
+            obj2world = obj.matrix_world
+            world2obj = matrix_inverted_safe(obj2world)
+            
+            location_local, normal_local = transform_point_normal(world2obj, location, normal)
+            tangent_local = orthogonal_in_XY(normal_local)
+            tangential2 = transform_point_normal(obj2world, location_local, tangent_local)[1]
+            
+            raycast_result.success = True
+            raycast_result.obj = obj
+            raycast_result.elem = bone
+            raycast_result.bbox = bbox
+            raycast_result.location = location
+            raycast_result.normal = normal
+            raycast_result.tangential2 = tangential2
+            raycast_result.elem_points_normals = [(location, normal)]
+        
+        return raycast_result
+    
+    def update_mesh_bakers(self):
+        v3d = self.sv.space_data
+        lv3d = v3d.local_view
+        
+        mesh_bakers = self.mesh_bakers.get(lv3d)
+        if mesh_bakers is None:
+            scene = self.sv.scene
+            
+            # workplane might become initialized during the snap operator
+            workplane_objs = self.tfm_tools.workplane.get_workplane_objs()
+            
+            include_objs = tuple(self.sv.visible_objects)
+            exclude_objs = workplane_objs
+            
+            mesh_bakers = {
+                "geometry":MeshBaker(scene,
+                    include=include_objs,
+                    exclude=exclude_objs,
+                    obj_types=self.snap_objects,
+                    edit=True,
+                    #selection=True,
+                    geometry='DEFAULT',
+                    origins='NEVER',
+                    bbox='NONE',
+                    dupli=self.snap_dupli,
+                    solid_only=self.snap_solid_only,
+                    auto_clear=True,
+                ),
+                "origins":MeshBaker(scene,
+                    include=include_objs,
+                    exclude=exclude_objs,
+                    obj_types=self.snap_objects,
+                    geometry='NONE',
+                    origins='ALWAYS',
+                    bbox='NONE',
+                    dupli=self.snap_dupli,
+                    solid_only=self.snap_solid_only,
+                    auto_clear=True,
+                ),
+                "bboxes":MeshBaker(scene,
+                    include=include_objs,
+                    exclude=exclude_objs,
+                    obj_types=self.snap_objects,
+                    geometry='NONE',
+                    origins='NEVER',
+                    bbox='FACES',
+                    dupli=self.snap_dupli,
+                    solid_only=self.snap_solid_only,
+                    auto_clear=True,
+                ),
+            }
+            self.mesh_bakers[lv3d] = mesh_bakers
+        
+        if self.snap_origins or self.snap_bboxes:
+            mesh_bakers["geometry"].update(0.03)
+            mesh_bakers["origins"].update(0.005)
+            mesh_bakers["bboxes"].update(0.005)
+            
+            if self.kd_last_rv3d != self.sv.region_data:
+                self.kd_last_rv3d = self.sv.region_data
+                self.kd_origins = None
+                self.kd_bboxes = None
+            
+            if self.snap_origins: self.kd_origins = self.update_kd(mesh_bakers["origins"], self.kd_origins)
+            if self.snap_bboxes: self.kd_bboxes = self.update_kd(mesh_bakers["bboxes"], self.kd_bboxes)
+        else:
+            mesh_bakers["geometry"].update(0.04)
+        
+        return mesh_bakers
+    
+    def compare_raycast(self, raycast_result, kd_result):
+        if not kd_result: return raycast_result
+        if not raycast_result: return kd_result
+        elem_points_normals = raycast_result.elem_points_normals # can be None or [] in case of depth cast
+        if (not elem_points_normals) and kd_result.elem_points_normals: return kd_result
+        if elem_points_normals and (len(elem_points_normals) > 2):
+            dist = mathutils.geometry.distance_point_to_plane(
+                kd_result.location, raycast_result.location, raycast_result.normal)
+            kd_result.success &= (dist > -1e-6)
+        else:
+            view_dir = self.sv.forward
+            kd_result.success &= (view_dir.dot(kd_result.location) < view_dir.dot(raycast_result.location))
+        return kd_result or raycast_result
+    
+    def update_sv(self, context, mouse):
+        self.sv = SmartView3D((mouse.x, mouse.y, 0))
+        if not self.sv: return
+        
+        # TODO: for non-workplane modes, also snap to workplane
+        
+        use_snap = self.use_snap
+        if self.invert_snap: use_snap = not use_snap
+        
+        if use_snap:
+            snap_midpoints = self.snap_midpoints
+            if self.special_snap: snap_midpoints = not snap_midpoints
+            # also, in case of grid -- divide increment by 10?
+            
+            if self.snap_precise:
+                mesh_bakers = self.update_mesh_bakers()
+                
+                raycast_result = self.sv.snap_cast(mouse, coords='WINDOW', mesh_baker=mesh_bakers["geometry"],
+                    snaps=self.snap_elements, loose=self.snap_loose, midpoints=snap_midpoints)
+                raycast_result.result_type = 'GEOMETRY'
+                
+                if self.snap_origins:
+                    kd_result = self.kd_raycast(mesh_bakers["origins"], self.kd_origins, mouse)
+                    kd_result.result_type = 'VIRTUAL'
+                    raycast_result = self.compare_raycast(raycast_result, kd_result)
+                
+                if self.snap_bboxes:
+                    kd_result = self.kd_raycast(mesh_bakers["bboxes"], self.kd_bboxes, mouse)
+                    kd_result.result_type = 'VIRTUAL'
+                    raycast_result = self.compare_raycast(raycast_result, kd_result)
+            else:
+                raycast_result = self.sv.snap_cast(mouse, coords='WINDOW', snaps=self.snap_elements)
+                raycast_result.result_type = 'GEOMETRY'
+        else:
+            raycast_result = None
+        
+        if raycast_result:
+            obj = raycast_result.obj
+            bone = raycast_result.elem
+            
+            if raycast_result.elem_points_normals:
+                self.snap_draw_type = raycast_result.result_type
+                self.snap_draw_verts = [pn[0] for pn in raycast_result.elem_points_normals]
+                if len(self.snap_draw_verts) > 2:
+                    self.snap_draw_tris = mathutils.geometry.tessellate_polygon([self.snap_draw_verts])
+                else:
+                    self.snap_draw_tris = []
+            else:
+                self.snap_draw_type = None
+                self.snap_draw_verts = []
+                self.snap_draw_tris = []
+            
+            if obj and raycast_result.bbox:
+                self.snapped_to_obj = True
+                self.snap_draw_bbox = raycast_result.bbox
+                self.snap_obj_matrix = Matrix(obj.matrix_world)
+            else:
+                self.snapped_to_obj = False
+                #self.snap_draw_bbox = None
+                #self.snap_obj_matrix = None
+            
+            x, y, z = orthogonal_XYZ(raycast_result.tangential1, raycast_result.tangential2, raycast_result.normal, "z")
+            if self.snap_normal_swizzle == 'YZX':
+                x, y, z = y, z, x
+            elif self.snap_normal_swizzle == 'ZXY':
+                x, y, z = z, x, y
+            t = raycast_result.location
+            
+            self.update_snap(context, obj, bone, (x, y, z, t))
+        else:
+            self.snapped_to_obj = False
+            self.snap_draw_type = None
+            self.snap_draw_verts = []
+            self.snap_draw_tris = []
+            self.update_free(context, mouse)
+    
+    def draw_px(self):
+        if not self.sv: return
+        sv = self.sv
+        
+        if bpy.context.region != sv.region: return
+        
+        prefs = addon.preferences
+        c_WP = prefs.workplane_color
+        c_LS = prefs.workplane_lines10_color
+        
+        radius = 5.0
+        alpha = 0.5
+        
+        use_snap = self.use_snap
+        if self.invert_snap: use_snap = not use_snap
+        
+        if not use_snap: return
+        
+        if self.snap_draw_bbox and (self.snap_origins or self.snap_bboxes):
+            cgl.Matrix_ModelView = cgl.Matrix_ModelView_3D
+            cgl.Matrix_Projection = cgl.Matrix_Projection_3D
+            
+            m = self.snap_obj_matrix
+            b0, b1 = self.snap_draw_bbox
+            def draw_line(batch, p0, p1):
+                batch.vertex(*(m * Vector(p0)))
+                batch.vertex(*(m * Vector(p1)))
+            
+            def draw_cross(batch, p):
+                p = (m * Vector(p))
+                xy = sv.project(p, align=True)
+                if not xy: return
+                batch.vertex(*(sv.unproject(xy, p)))
+                batch.vertex(*(sv.unproject(xy+Vector((-1,0)), p)))
+                batch.vertex(*(sv.unproject(xy+Vector((1,0)), p)))
+                batch.vertex(*(sv.unproject(xy+Vector((0,-1)), p)))
+                batch.vertex(*(sv.unproject(xy+Vector((0,1)), p)))
+            
+            bbox_alpha = (1.0 if self.snapped_to_obj else 0.5)
+            
+            with cgl(LineWidth=1, DepthMask=0, DEPTH_TEST=True, BLEND=True, LINE_STIPPLE=True):
+                if self.snap_bboxes:
+                    cgl.Color = (c_LS[0], c_LS[1], c_LS[2], c_LS[3]*bbox_alpha*0.5)
+                    with cgl.batch('LINES') as batch:
+                        draw_line(batch, (b0.x, b0.y, b0.z), (b1.x, b0.y, b0.z))
+                        draw_line(batch, (b0.x, b0.y, b0.z), (b0.x, b1.y, b0.z))
+                        draw_line(batch, (b0.x, b0.y, b0.z), (b0.x, b0.y, b1.z))
+                        draw_line(batch, (b1.x, b1.y, b1.z), (b0.x, b1.y, b1.z))
+                        draw_line(batch, (b1.x, b1.y, b1.z), (b1.x, b0.y, b1.z))
+                        draw_line(batch, (b1.x, b1.y, b1.z), (b1.x, b1.y, b0.z))
+                        draw_line(batch, (b1.x, b0.y, b0.z), (b1.x, b0.y, b1.z))
+                        draw_line(batch, (b0.x, b1.y, b0.z), (b0.x, b1.y, b1.z))
+                        draw_line(batch, (b0.x, b0.y, b1.z), (b1.x, b0.y, b1.z))
+                        draw_line(batch, (b0.x, b0.y, b1.z), (b0.x, b1.y, b1.z))
+                        draw_line(batch, (b1.x, b0.y, b0.z), (b1.x, b1.y, b0.z))
+                        draw_line(batch, (b0.x, b1.y, b0.z), (b1.x, b1.y, b0.z))
+                
+                cgl.Color = (0.0, 1.0, 1.0, 1.0*bbox_alpha)
+                with cgl.batch('POINTS') as batch:
+                    if self.snap_origins:
+                        draw_cross(batch, (0.0, 0.0, 0.0)) # origin
+                    if self.snap_bboxes:
+                        for bz in (0.0, 0.5, 1.0):
+                            for by in (0.0, 0.5, 1.0):
+                                for bx in (0.0, 0.5, 1.0):
+                                    draw_cross(batch, (lerp(b0.x, b1.x, bx), lerp(b0.y, b1.y, by), lerp(b0.z, b1.z, bz)))
+            
+            cgl.Matrix_ModelView = cgl.Matrix_ModelView_2D
+            cgl.Matrix_Projection = cgl.Matrix_Projection_2D
+        
+        if len(self.snap_draw_verts) > 2:
+            cgl.Matrix_ModelView = cgl.Matrix_ModelView_3D
+            cgl.Matrix_Projection = cgl.Matrix_Projection_3D
+            
+            with cgl(DepthMask=0, DEPTH_TEST=False, BLEND=True):
+                cgl.Color = (0.0, 1.0, 0.0, alpha*0.75)
+                with cgl.batch('TRIANGLES') as batch:
+                    for i0, i1, i2 in self.snap_draw_tris:
+                        batch.vertex(*self.snap_draw_verts[i0])
+                        batch.vertex(*self.snap_draw_verts[i1])
+                        batch.vertex(*self.snap_draw_verts[i2])
+            
+            cgl.Matrix_ModelView = cgl.Matrix_ModelView_2D
+            cgl.Matrix_Projection = cgl.Matrix_Projection_2D
+        elif len(self.snap_draw_verts) == 2:
+            line_proj = sv.project_primitive(self.snap_draw_verts)
+            if line_proj:
+                with cgl(DepthMask=0, DEPTH_TEST=False, BLEND=True):
+                    cgl.Color = (0.0, 0.0, 1.0, alpha)
+                    with cgl.batch('POLYGON') as batch:
+                        batch.sequence(batch.rounded_primitive(line_proj, radius*0.5, resolution=2.0))
+        elif len(self.snap_draw_verts) == 1:
+            xy_proj = sv.project(self.snap_draw_verts[0])
+            if xy_proj:
+                with cgl(DepthMask=0, DEPTH_TEST=False, BLEND=True):
+                    if self.snap_draw_type == 'VIRTUAL':
+                        cgl.Color = (0.0, 1.0, 1.0, alpha)
+                    else:
+                        cgl.Color = (1.0, 0.0, 0.0, alpha)
+                    with cgl.batch('POLYGON') as batch:
+                        batch.sequence(batch.circle(xy_proj, radius, resolution=16))
+
+class SpatialCommand:
+    def __init__(self, command="", command_type='AUTO'):
+        self.command = command
+        
+        if command_type == 'AUTO':
+            if "?" in self.command:
+                command_type = 'QUERY'
+            else:
+                command_type = 'SNAP'
+        self.command_type = command_type
+        
+        self.error = ""
+        try:
+            if self.command_type == 'QUERY':
+                self.do_command_query()
+            elif self.command_type == 'SNAP':
+                self.do_command_snap()
+        except Exception as exc:
+            self.error = exc.message
+            traceback.print_exc()
+    
+    def parse_command(self, item_extra=""):
+        following_chars = {"item":set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"+item_extra), "number":set("0123456789-+.e")}
+        
+        toks = []
+        tok = ""
+        tok_type = ""
+        tok_sign = 1
+        
+        for c in self.command:
+            if c.isspace() or (not c.isprintable()):
+                if tok: toks.append((tok_type, tok))
+                tok = ""
+                tok_type = ""
+                tok_sign = 1
+                continue
+            
+            if tok:
+                if c in following_chars[tok_type]:
+                    tok += c
+                    continue
+                else:
+                    toks.append((tok_type, tok))
+            
+            if c == "-":
+                tok_sign = -tok_sign
+            elif c == "+":
+                pass
+            elif c.isalpha():
+                if tok_sign < 0: c = "-"+c
+                tok = c
+                tok_type = "item"
+                tok_sign = 1
+            elif c.isdecimal() or (c == "."):
+                if tok_sign < 0: c = "-"+c
+                tok = c
+                tok_type = "number"
+                tok_sign = 1
+            else:
+                tok = ""
+                tok_type = ""
+                tok_sign = 1
+                toks.append(("symbol", c)) # always 1-character
+        
+        if tok: toks.append((tok_type, tok))
+        
+        return toks
+    
+    def do_command_query(self):
+        raise Exception("Spatial queries aren't implemented yet")
+    
+    def do_command_snap(self):
+        toks = self.parse_command("<>!$%^")
+        
+        use_individual = False
+        use_nearest = False
+        use_increment = False
+        
+        arg_from = []
+        arg_op = None
+        arg_to = []
+        arg_grid = []
+        
+        op_pos = ":"
+        po_rot = "\\"
+        op_scl = "="
+        op_toks = op_pos + po_rot + op_scl
+        
+        # from:(item+) [individual] [nearest] op to:((item|math|number)+) [grid (math|number)*]
+        state_op = 1
+        state_grid = 2
+        state = 0
+        for tok_type, tok in toks:
+            if state < state_op:
+                if tok_type == "item":
+                    arg_from.append(self.parse_item(tok_type, tok)) # 1st "from" item is "what"
+                elif tok == "*":
+                    use_individual = True
+                elif tok == "&":
+                    use_nearest = True
+                elif tok in op_toks:
+                    state = state_op
+                    arg_op = tok
+                else:
+                    raise Exception("Invalid snap syntax")
+            elif state < state_grid:
+                if tok == "#":
+                    state = state_grid
+                    use_increment = True
+                else:
+                    arg_to.append(self.parse_item(tok_type, tok))
+            else:
+                if tok_type == "item":
+                    raise Exception("Invalid snap syntax")
+                else:
+                    arg_grid.append(self.parse_item(tok_type, tok))
+        
+        if not arg_from: raise Exception("Invalid snap syntax")
+        if not arg_op: raise Exception("Invalid snap syntax")
+        if not arg_to: raise Exception("Invalid snap syntax")
+        
+        """
+        s selection
+        a active
+        r rest (selection except the active)
+        c cursor
+        p workplane
+        t coordsystem
+        A..Z refpoint
+        
+        w world
+        v view
+        n normal
+        m manipulator
+        """
+        
+        info_from = self.SnapInfo(arg_from)
+        info_to = self.SnapInfo(arg_to)
+        info_grid = self.GridInfo(arg_grid)
+    
+    class GridInfo:
+        def __init__(self, args):
+            self.scale_mode = "="
+            self.scale_value = 1.0
+            for arg in args:
+                if isinstance(arg, str):
+                    if arg == "*":
+                        self.scale_mode = "*"
+                    elif arg == "/":
+                        self.scale_mode = "/"
+                    else:
+                        raise Exception("Invalid snap syntax")
+                elif isinstance(arg, float):
+                    self.scale_value = arg
+                else:
+                    raise Exception("Invalid snap syntax")
+    
+    class SnapInfo:
+        def __init__(self, args):
+            self.what = None
+            self.origin = None
+            self.axes = []
+            
+            prev_arg_is_axis = False
+            for arg in args:
+                if isinstance(arg, str):
+                    if not prev_arg_is_axis: raise Exception("Invalid snap syntax")
+                    if arg == "*":
+                        self.axes[-1].scale_mode = "*"
+                    elif arg == "/":
+                        self.axes[-1].scale_mode = "/"
+                    else:
+                        raise Exception("Invalid snap syntax")
+                elif isinstance(arg, float):
+                    if not prev_arg_is_axis: raise Exception("Invalid snap syntax")
+                    self.axes[-1].scale_value = arg
+                else:
+                    if not self.what: self.what = arg[0]
+                    if len(arg) == 1:
+                        if self.what and self.origin: raise Exception("Invalid snap syntax")
+                        self.origin = arg[0]
+                        prev_arg_is_axis = False
+                    else:
+                        if len(self.axes) >= 3: raise Exception("Invalid snap syntax")
+                        self.axes.append(self.SnapAxis(arg))
+                        prev_arg_is_axis = True
+    
+    class SnapAxis:
+        def __init__(self, points):
+            self.p0, self.p1 = points
+            self.scale_mode = "="
+            self.scale_value = 1.0
+    
+    class SnapPoint:
+        use_objects = None
+        use_geometry = None
+        aggr_mode = "origin"
+        
+        def __init__(self, c):
+            if (c in "xyz"):
+                self.main = ""
+                self.axis = c
+                self.is_refpoint = False
+            else:
+                self.main = c
+                self.axis = ""
+                self.is_refpoint = c.isupper()
+                if (not self.is_refpoint) and (c not in "sarcptwvnm"): raise Exception("Invalid snap syntax")
+        
+        def update(self, c):
+            if self.is_refpoint:
+                if c not in "0123456789": raise Exception("Invalid snap syntax")
+                self.main += c
+            else:
+                if c == "^":
+                    self.use_objects = True
+                elif c == "%":
+                    self.use_geometry = True
+                elif c == "$":
+                    self.aggr_mode = "mean"
+                elif c == "!":
+                    self.aggr_mode = "center"
+                elif c == "<":
+                    self.aggr_mode = "min"
+                elif c == ">":
+                    self.aggr_mode = "max"
+                else:
+                    raise Exception("Invalid snap syntax")
+    
+    def parse_item(self, tok_type, tok):
+        if tok_type == "symbol": return tok
+        
+        if tok_type == "number":
+            try:
+                return float(tok)
+            except Exception:
+                raise Exception("Invalid number representation")
+        
+        sign = 1
+        points = []
+        p_main = None
+        for c in tok:
+            if c == "-":
+                sign = -sign
+            elif c.isalpha():
+                if len(points) >= 2: raise Exception("Invalid snap syntax")
+                p = self.SnapPoint(c)
+                points.append(p)
+                if (not p.is_refpoint) and p.main: p_main = p
+            else:
+                if not points: raise Exception("Invalid snap syntax")
+                points[-1].update(c)
+        
+        if not p_main: raise Exception("Invalid snap syntax")
+        
+        for p in points:
+            if not p.main: p.main = p_main
+        
+        if (sign < 0) and (len(points) > 1): points = [points[1], points[0]]
+        
+        return points
+
+"""
+a, A, A1 - points
+ax, ay, az, ab, aA, Aa, AA1, aA1, A1A, A1a, A1A2 - axes
+-ax, -AA1 - inverted axes
+
+what if inverted axes can be specified in inverse order?
+xa = -ax
+
+'snap to' examples:
+': a' -- snap to a by all axes, zero offset
+': a.z' -- snap to a only by z axis (projection on plane), zero offset
+': a.xy' -- snap to a only by x&y axes (projection on line), zero offset
+': w.x a.z' -- lock to w.x and a.z axes (projection on line), with origin at w
+': w.x % a.z' -- lock to cross-product w.x and a.z (projection on plane), with origin at w
+': c a.z' -- snap to c by a.z axis (projection on plane)
+
+or maybe like this:
+': a' == ': a a.x a.y a.z' -- "lock by a.x, a.y, a.z at offset 0 from a"
+': a a.x' == ': a a.x 0' == ': a a.x *0' -- "lock by a.x at offset 0 from a" (i.e. project on YZ plane)
+
+align/match (rotate/scale):
+from: optionally origin, optionally axis1, optionally axis2
+to: either 2 axes (xy by default) or 1 axis (projection rotation)
+
+combinations:
+A - refpoint
+a - object/coordsystem
+AB - axis with origin at A
+Aa - axis with origin at A
+aA - axis with origin at a
+a.z - axis with origin at a
+ABC - two axes with origin at A
+A-BC - two axes with origin at A
+AB-C - two axes with origin at A
+A-B-C - two axes with origin at A
+a.zB - not allowed
+ABa.z - not allowed
+
+
+\\ Other quick actions for refpoints: Modifier+Click on refpoint -> show/hide? raycast?
+# AB - line from A to B; -AB - line from B to A; A1 - line from A to A1; -A1 - line from A1 to A; A1B - line from A1 to B; A1B1 - line from A1 to B1
+# three points define a plane or a normal to plane
+# move A B - moves from A to B
+# move A B 0.5 - moves from A to ensure distance 0.5 to B
+# move[object: :O, geometry: :G] [individual: *]FROM TO [distance: a number] [use grid/increment: #] [lock axes: lowercase xyz] // increment/lock coordsystem is specified outside of the command line (or: simply use current coordsystem?)
+#   some special cases: (closest | origin | mean | center | min | max) * (objects' origins | geometry); world, cursor, workplane, pivot, active ?
+
+(selection-active|selection|active) * (objects+geometry|objects|geometry) * (origin|average|center|min|max)
+selection-active = "rest" (r)
+objects+geometry = [by default, i.e. no symbol]
+origin = [by default, i.e. no symbol]
+
+objects = ^
+geometry = %
+average = $
+center = !
+min = < (or 0)
+max = > (or 1)
+
+s selection
+a active
+r rest (selection-active)
+c cursor
+p workplane
+t coordsystem
+
+w world
+v view
+n normal
+m manipulator
+
+x
+y
+z
+
+selection (aliases: sel, s (or l?)) - objects are transformed along with their geometry
+objects (aliases: obj, o) - geometry remains in place
+geometry (aliases: geo, gmt, gry, g) - objects' matrices remain the same
+cursor (aliases: cur, c)
+workplane (aliases: plane, pln, wrk, p)
+coordsystem? (aliases: system, sys, t (or s?))
+
+world (aliases: wrl, wrd, w)
+active (aliases: act, a)
+view (aliases: v)
+normal (aliases: nor, n)
+mean (aliases: avg, $) (applicable to selection, objects, geometry, active)
+center (aliases: cnt, ctr, cen, %) (applicable to selection, objects, geometry, active)
+min (aliases: <) (applicable to selection, objects, geometry, active)
+max (aliases: >) (applicable to selection, objects, geometry, active)
+manipulator? (aliases: man, m) (used for pivot / current orientation)
+
+capital letters - refpoints
+
+* - individual mode
+& - closest/nearest mode
+# - grid/increment
+
++/- x/y/z axes? arbitrary offsets?
+
+: snap/move
+/ align/rotate
+= match/scale
+
+> snap/move
+: align/rotate
+/ match/scale
+
+* option: snap/align selection as a whole or each element individually
+* ability to align workplane to object / polygon / plane
+* "axis-matching rotation" operator (rotate selection to make one vector parallel to another)
+* add operation to align object to workplane via its face
+    think of an operation to "unrotate" an object which has rotated data
+    \\ as an example (though probably not optimal):
+    http://blenderartists.org/forum/showthread.php?256295-Script-to-align-objects-to-a-face-and-line-on-that-face
+
+* Workplane from world/view/object/orientation/coordsystem XY/YZ/XZ
+* Workplane from selection (orthogonal to normal)
+* Workplane from 3D-view-picked normal
+* Workplane from 3 selected objects/elements (will lie in the plane)
+* Workplane from 2 selected objects/elements (will be orthogonal to line)
+
+Spatial queries:
+* Distance to point/curve/surface/volume # special cases: planes
+* Intersection with point/curve/surface/volume # special cases: half-spaces
+* Angle to point/vector
+* Raycast from point/vector
+"""
+
 @addon.Operator(idname="view3d.transform_tools_snap", options={'REGISTER', 'UNDO'}, description="Click: perform snap/align/match, Shift+Click: show history of commands, Alt+Click: show help")
-def Operator_Snap(self, context, event): pass
+def Operator_Snap(self, context, event, command=""): pass
 
 @addon.Operator(idname="view3d.transform_tools_query", options={'REGISTER', 'UNDO'}, description="Click: perform spatial query, Shift+Click: show history of commands, Alt+Click: show help")
-def Operator_Query(self, context, event): pass
+def Operator_Query(self, context, event, command=""): pass
 
-@addon.Operator(idname="view3d.transform_tools_raycast", options={'REGISTER', 'UNDO'}, description="Click: snap cursor/plane/point to surface under mouse")
-def Operator_Raycast(self, context, event): pass
+@addon.Menu(idname="VIEW3D_MT_transform_tools_options", label="Options", description="Options")
+def Menu_Transform_Tools_Options(self, context):
+    tfm_tools = get_transform_tools(context)
+    layout = NestedLayout(self.layout)
+    layout.prop_menu_enum(tfm_tools, "snap_objects", text="Snap: objects", icon='OUTLINER_DATA_EMPTY')
+    layout.prop_menu_enum(tfm_tools, "snap_elements", text="Snap: elements", icon='UV_SYNC_SELECT') # LOOPSEL is absent in 2.70
+    layout.prop_menu_enum(tfm_tools, "snap_normal_swizzle", "Snap: normal", icon='SNAP_NORMAL')
+    layout.props_enum(tfm_tools, "snap_options")
 
 @addon.PropertyGroup
 class TransformToolsPG:
@@ -2449,14 +3278,29 @@ class TransformToolsPG:
     workplane = WorkplanePG | prop()
     refpoints = RefpointsPG | prop()
     
-    command = "" | prop() # Enter: do nothing, Ctrl+Enter: execute as snap, Shift+Enter: execute as spatial query ... OR: interpret by context? (e.g. all queries begin with "?")
+    def command_update(self, context):
+        if not self.command: return
+        sc = SpatialCommand(self.command)
+        if sc.error:
+            messagebox(sc.error, 'ERROR')
+        else:
+            self.command = ""
+    command = "" | prop(update=command_update) # Enter: do nothing, Ctrl+Enter: execute as snap, Shift+Enter: execute as spatial query ... OR: interpret by context? (e.g. all queries begin with "?")
     
     active_tools = {'CURSOR'} | prop(items=[('CURSOR', "Cursor", "3D Cursor"), ('WORKPLANE', "Plane", "Workplane"), ('REFPOINTS', "Points", "Reference points")])
     
+    snap_options = {'PRECISE', 'LOOSE'} | prop(items=[
+        ('PRECISE', "Snap: precise", "Snap to vertices/edges/faces (SLOW in high-poly scenes)"),
+        ('LOOSE', "Snap: loose", "Snap also to loose vertices/edges (VERY SLOW in high-poly scenes)"),
+        ('SOLID_ONLY', "Snap: solid only", "Ignore non-geometry objects and objects with Wire or Bounds draw type"),
+        ('MIDPOINTS', "Snap: midpoints", "Snap to midpoints of edges/polygons"),
+    ])
+    snap_elements = {'VERT', 'EDGE', 'FACE', 'DEPTH'} | prop(items=[('VERT', "Vertices"), ('EDGE', "Edges"), ('FACE', "Faces"), ('DEPTH', "Depth buffer")])
+    snap_objects = {'ORIGIN', 'BBOX', 'DUPLI', 'EMPTY', 'CAMERA', 'LAMP', 'SPEAKER', 'ARMATURE', 'LATTICE', 'META', 'FONT', 'CURVE', 'SURFACE', 'MESH'} | prop(items=[('ORIGIN', "Origins"), ('BBOX', "Bounds"), ('DUPLI', "Dupli-objects"), ('EMPTY', "Empties"), ('CAMERA', "Cameras"), ('LAMP', "Lamps"), ('SPEAKER', "Speakers"), ('ARMATURE', "Armatures"), ('LATTICE', "Lattices"), ('META', "Meta-surfaces"), ('FONT', "Texts"), ('CURVE', "Curves"), ('SURFACE', "Surfaces"), ('MESH', "Meshes")])
+    snap_normal_swizzle = 'XYZ' | prop(items=['XYZ', 'YZX', 'ZXY'])
+    
     def draw_header(self, layout):
-        return
-        layout.menu("VIEW3D_MT_transform_tools_align", icon='ALIGN', text="")
-        layout.menu("VIEW3D_MT_transform_tools_spatial_queries", icon='BORDERMOVE', text="")
+        layout.menu("VIEW3D_MT_transform_tools_options", text="", icon='SCRIPTWIN')
     
     def draw(self, layout):
         with layout.row(True):
@@ -2477,6 +3321,7 @@ def get_transform_tools(context=None, search=False):
             if window.screen.name == "temp": continue
             return window.screen.scene.transform_tools
             #return window.screen.transform_tools
+    if not context.screen: return context.scene.transform_tools
     return context.screen.scene.transform_tools
     #return context.screen.transform_tools
     #return addon.internal.transform_tools
@@ -2502,11 +3347,31 @@ def scene_update(scene):
     tfm_tools.workplane.on_scene_update()
     tfm_tools.cursor.on_scene_update()
 
+def blocked_cursor3d_callback(op_info, context, event):
+    bpy.ops.view3d.transform_snap('INVOKE_DEFAULT', mode='CURSOR')
+
+@addon.load_post
+def load_post():
+    context = bpy.context
+    tfm_tools = get_transform_tools(context)
+    tfm_tools.workplane.load_post()
+
+@addon.after_register
+def after_register():
+    context = bpy.context
+    tfm_tools = get_transform_tools(context)
+    tfm_tools.workplane.after_register()
+    
+    # this cannot be done in the register itself, since keymaps might be not defined at that time
+    #UIMonitor.block_operator("view3d.cursor3d", blocked_cursor3d_callback)
+
 @addon.on_unregister
 def on_unregister():
     context = bpy.context
     tfm_tools = get_transform_tools(context)
     tfm_tools.workplane.on_unregister()
+    
+    #UIMonitor.unblock_operator("view3d.cursor3d")
 
 @addon.ui_monitor
 def ui_monitor(context, event, UIMonitor):
