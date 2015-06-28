@@ -69,6 +69,7 @@ addon = AddonManager()
 PROBLEMS:
 * the way I work with axis-angle rotation mode seems buggy
 * bug/glitch with VIEW system, noticeable when chosed as a manipulator orientation (view matrix (or other params) lag one frame behind, which leads to visible distortions of the manipulator when rotating the view)
+* moth3r says Batch Transforms is slow on files with many objects
 
 BUG: if editmode object is not the same as active object, selection-walker's bmesh is None
 
