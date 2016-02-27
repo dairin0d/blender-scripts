@@ -19,7 +19,7 @@ bl_info = {
     "name": "Cut/Copy/Paste objects and elements",
     "description": "Cut/Copy/Paste objects and elements",
     "author": "dairin0d",
-    "version": (0, 6, 3),
+    "version": (0, 6, 4),
     "blender": (2, 7, 0),
     "location": "View3D -> Ctrl+X, Ctrl+C, Ctrl+V, Shift+Delete, Ctrl+Insert, Shift+Insert",
     "warning": "",
