@@ -19,7 +19,7 @@ bl_info = {
     "name": "Batch Transforms (Transform Utils)",
     "description": "Batch Transforms (Transform Utils)",
     "author": "dairin0d, moth3r",
-    "version": (0, 4, 8),
+    "version": (0, 4, 9),
     "blender": (2, 7, 0),
     "location": "View3D > Transform category in Tools panel",
     "warning": "Experimental / WIP",
@@ -70,6 +70,16 @@ PROBLEMS:
 * the way I work with axis-angle rotation mode seems buggy
 * bug/glitch with VIEW system, noticeable when chosed as a manipulator orientation (view matrix (or other params) lag one frame behind, which leads to visible distortions of the manipulator when rotating the view)
 * moth3r says Batch Transforms is slow on files with many objects
+
+\\ Another possible option on how to handle the "hide 3D cursor" problem:
+Since the main devs refuse to add an option to not draw cursor (or even alter its appearance), the only _other_ way to "hide" it is to either move it outside of camera view for the duration of the 2D rendering, or to over-paint it with the result of 3D rendering (which will over-paint other 2D rendering too).
+The "out-of-camera-view" solution has 2 drawbacks:
+* minor: other addons may potentially use cursor position to draw something
+* major: cursor movement causes a redraw event
+In fact, two generic solutions can be proposed for each problem, which would also be useful for other kinds of situations:
+* provide a way to manipulate the order of 2D/3D drawing callbacks
+* provide a way to disable the redraw event for a section of code
+** useful for anything that requires making modifications to the scene and then reverts to the original state
 
 BUG: if editmode object is not the same as active object, selection-walker's bmesh is None
 

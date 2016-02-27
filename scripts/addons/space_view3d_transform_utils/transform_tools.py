@@ -73,6 +73,17 @@ del workplane_matrix
 TODO:
 * option to turn on/off cursor projection on workplane when view is aligned to workplane
 
+[BUG]: for moth3r, Batch Operations prevent UIMonitor from running (also there is a bug that Matrix_ModelView_2D is None in post_px callback)
+actually, it seems to depend on the order of enabling the addons:
+* if Operations then Transforms, operator keymap override works
+* if Transforms then Operations - doesn't work
+* When moth3r hasworkplane enabled, opening a file crashes blender
+
+[make current and the following behavior switchable]
+add option to disable workplane navigation override (moth3r suggests to make "align to workplane" also function as a switch)
+
+while mesh is not built, use Blender's scene.raycast() in SmartView3D.snap_cast()?
+
 update documentation
 upload latest versions
 
@@ -178,6 +189,7 @@ http://www.cad4arch.com/cadtools/
 http://www.kurzemnieks.com/hierarchy-helper-tools-blender-addon/
 http://www.blenderartists.org/forum/showthread.php?355154-Addon-Retopo-MT
 http://knowledge.autodesk.com/support/fusion-360/learn-explore/caas/CloudHelp/cloudhelp/ENU/Fusion-Form/files/GUID-D9E1DC97-8C60-447A-A30A-54F99FB9CE3B-htm.html
+https://cgcookiemarkets.com/blender/all-products/snap-utilities/
 
 http://blenderartists.org/forum/showthread.php?351179-Official-Addons-Repair-Project-for-Blender-2-73
 http://blenderartists.org/forum/showthread.php?354412-Is-2-73-going-to-break-all-exporting-add-ons/page2
@@ -1189,8 +1201,8 @@ class Operator_Orbit_Around_Workplane:
             axis = self.sv.right # this is how built-in operator works
         angle = math.radians(prefs.view.rotation_angle)
         
-        sv.rotation = Quaternion(axis, angle) * sv.rotation # error - for test
-        #self.sv.rotation = Quaternion(axis, angle) * self.sv.rotation
+        #self.sv.rotation = Quaternion(axis, angle) * self.sv.rotation # error - for test
+        self.sv.rotation = Quaternion(axis, angle) * self.sv.rotation
         
         return {'FINISHED'}
 

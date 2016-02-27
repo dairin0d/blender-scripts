@@ -86,8 +86,6 @@ It can paste even in a different file, but it will always append everything
 # - Transform operator should revert to default snap mode if Ctrl status
 #   is released (if Ctrl was held when the operator was called, it would
 #   think that Ctrl is still pressed even when it's not)
-# - When appending from file, objects with parent-child relations update
-#   strangely (when moving the parent, the child does not update)
 
 # TODO: save copy/paste preferences?
 
@@ -840,8 +838,7 @@ class OperatorPaste:
             lib_path = os.path.normcase(bpy.path.abspath(lib_path))
             libraries[id] = ("" if lib_path == this_path else lib_path)
         
-        self.active_object_library = \
-            libraries.get(active_object_library, None)
+        self.active_object_library = libraries.get(active_object_library, None)
         
         # Gather all objects under their respective libraries
         self.libraries = {}
@@ -975,18 +972,22 @@ class OperatorPaste:
         
         scene.update()
         
-        # Restore parent relations
+        # Restore parent relations (Blender actually adds a relationship
+        # if both parent and child are imported, but for some reason
+        # the imported parent doesn't affect the imported children.
+        # Also, on re-parenting the matrix has to be restored.)
         for obj, old_name in new_to_old.items():
             parent_info = self.parents.get(old_name, None)
             if parent_info:
                 parent = old_to_new.get(parent_info[0])
                 if parent:
+                    mw = Matrix(obj.matrix_world)
                     obj.parent = parent
                     obj.parent_bone = parent_info[1]
+                    obj.matrix_world = mw
         
         # In Object mode the coordsystem option is not used
-        # (ambiguous and the same effects can be achieved
-        # relatively easily)
+        # (ambiguous and the same effects can be achieved relatively easily)
         
         if opts.link_ghost_objects:
             # make sure all groups' objects are present at least in 1 scene (so that they can be deleted)
@@ -1029,8 +1030,7 @@ class OperatorPaste:
                 self.process_mesh_mesh(obj, context, stream)
     
     def process_mesh_curve(self, obj, context, stream):
-        not_local, transform, transform_pivot = \
-            self.calc_transform(context, obj)
+        not_local, transform, transform_pivot = self.calc_transform(context, obj)
         
         iofuncs = def_read_funcs(stream)
         read = iofuncs["read"]
@@ -1175,8 +1175,7 @@ class OperatorPaste:
                 set_point(points[i], vi)
     
     def process_mesh_mesh(self, obj, context, stream):
-        not_local, transform, transform_pivot = \
-            self.calc_transform(context, obj)
+        not_local, transform, transform_pivot = self.calc_transform(context, obj)
         
         iofuncs = def_read_funcs(stream)
         read = iofuncs["read"]
