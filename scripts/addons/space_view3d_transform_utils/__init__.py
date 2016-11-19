@@ -111,6 +111,8 @@ For EDIT_ARMATURE mode: implement aggregation of other settings from EditBone?
 * Pick transform? (respecting axis locks)
 * Grase pencil summaries?
 
+see also: https://vimeo.com/user2228784/videos
+
 see also: http://modo.docs.thefoundry.co.uk/modo/601/help/pages/modotoolbox/ActionCenters.html
 
 See Modo's Absolute Scaling
