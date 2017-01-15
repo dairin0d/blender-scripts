@@ -20,8 +20,8 @@
 bl_info = {
     "name": "Import Open",
     "author": "dairin0d, moth3r",
-    "version": (1, 0, 0),
-    "blender": (2, 7, 0),
+    "version": (1, 0, 1),
+    "blender": (2, 7, 8),
     "location": "",
     "description": "Open non-.blend files using active importers",
     "warning": "",
@@ -101,7 +101,7 @@ def clear_all_scenes(name="Scene"):
     scenes = list(bpy.data.scenes)
     empty_scene = bpy.data.scenes.new(name)
     for scene in scenes:
-        bpy.data.scenes.remove(scene)
+        bpy.data.scenes.remove(scene, do_unlink=True)
     empty_scene.name = name
 
 def load_argv_file():

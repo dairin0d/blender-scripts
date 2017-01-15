@@ -26,7 +26,7 @@ bl_info = {
     "description": "Cable editor",
     "warning": "",
     "wiki_url": "",
-    "tracker_url": "",
+    "tracker_url": "https://github.com/dairin0d/cable-editor/issues",
     "category": "Object"}
 #============================================================================#
 

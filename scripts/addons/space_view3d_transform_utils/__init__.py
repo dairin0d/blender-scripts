@@ -24,7 +24,7 @@ bl_info = {
     "location": "View3D > Transform category in Tools panel",
     "warning": "Experimental / WIP",
     "wiki_url": "http://wiki.blender.org/index.php/Extensions:2.6/Py/Scripts/3D_interaction/BatchTransforms",
-    "tracker_url": "",
+    "tracker_url": "https://github.com/dairin0d/transform-utils/issues",
     "category": "3D View"}
 #============================================================================#
 
