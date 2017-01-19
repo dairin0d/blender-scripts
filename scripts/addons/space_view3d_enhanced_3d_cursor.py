@@ -157,7 +157,7 @@ class EnhancedSetCursor(bpy.types.Operator):
     key_coordsys_map = {
         'LEFT_BRACKET':-1,
         'RIGHT_BRACKET':1,
-        ';':-1, # Instead of [ for French keyboards
+        ':':-1, # Instead of [ for French keyboards
         '!':1, # Instead of ] for French keyboards
         'J':'VIEW',
         'K':"Surface",
