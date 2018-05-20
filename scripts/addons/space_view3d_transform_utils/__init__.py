@@ -19,7 +19,7 @@ bl_info = {
     "name": "Batch Transforms (Transform Utils)",
     "description": "Batch Transforms (Transform Utils)",
     "author": "dairin0d, moth3r",
-    "version": (0, 4, 9),
+    "version": (0, 4, 10),
     "blender": (2, 7, 0),
     "location": "View3D > Transform category in Tools panel",
     "warning": "Experimental / WIP",
