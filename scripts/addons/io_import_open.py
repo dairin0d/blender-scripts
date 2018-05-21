@@ -20,7 +20,7 @@
 bl_info = {
     "name": "Import Open",
     "author": "dairin0d, moth3r",
-    "version": (1, 0, 1),
+    "version": (1, 0, 2),
     "blender": (2, 7, 8),
     "location": "",
     "description": "Open non-.blend files using active importers",
@@ -67,10 +67,12 @@ def iter_importers():
 def collect_importers():
     importers = []
     
-    # Special case: Collada is built-in, resides
-    # in an unconventional category, and has no
-    # explicit ext/glob properties defined
-    op_info = ImporterInfo("Collada", "wm.collada_export", ".dae", "*.dae")
+    # Special case: Collada (built-in)
+    op_info = ImporterInfo("Collada", "wm.collada_import", ".dae", "*.dae")
+    importers.append(op_info)
+    
+    # Special case: Alembic (built-in)
+    op_info = ImporterInfo("Alembic", "wm.alembic_import", ".abc", "*.abc")
     importers.append(op_info)
     
     for total_name, op in iter_importers():
