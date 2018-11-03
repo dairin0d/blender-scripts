@@ -402,7 +402,10 @@ class WorkplanePG:
         
         if work_obj.name == self.worksurf_name:
             if self.limit == 0:
-                bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=8, diameter=2.0) # actually, radius?
+                try:
+                    bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=8, diameter=2.0) # actually, radius?
+                except TypeError: # quick fix for Blender 2.79.6
+                    bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=8, radius=2.0)
             else:
                 bmesh.ops.create_grid(bm, x_segments=2, y_segments=2, size=1.0) # actually, halfsize?
         elif work_obj.name == self.workpolar_name:

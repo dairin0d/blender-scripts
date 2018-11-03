@@ -20,7 +20,7 @@
 bl_info = {
     "name": "Import Open",
     "author": "dairin0d, moth3r",
-    "version": (1, 0, 2),
+    "version": (1, 0, 3),
     "blender": (2, 7, 8),
     "location": "",
     "description": "Open non-.blend files using active importers",
@@ -35,6 +35,27 @@ import bpy
 import os
 import sys
 import fnmatch
+
+def get_rna_type(op):
+    if hasattr(op, "get_rna"): return op.get_rna().rna_type
+    # There is no get_rna() in Blender 2.79.6
+    return op.get_rna_type()
+
+def get_filter_glob(op, default_filter):
+    if hasattr(op, "get_rna"):
+        rna = op.get_rna()
+        return getattr(rna, "filter_glob", default_filter)
+    # There is no get_rna() in Blender 2.79.6
+    return op.get_rna_type().properties.get("filter_glob", default_filter)
+
+def get_filename_ext(op, default_ext):
+    if hasattr(op, "get_instance"):
+        op_class = type(op.get_instance())
+        return getattr(op_class, "filename_ext", default_ext)
+    # There is no get_instance() in Blender 2.79.6
+    return op.get_rna_type().properties.get("filename_ext", default_ext)
+
+#============================================================================#
 
 class ImporterInfo:
     def __init__(self, name, op_id, ext, glob):
@@ -76,12 +97,10 @@ def collect_importers():
     importers.append(op_info)
     
     for total_name, op in iter_importers():
-        op_class = type(op.get_instance())
-        rna = op.get_rna()
-        
-        op_info = ImporterInfo(rna.rna_type.name, total_name,
-            getattr(op_class, "filename_ext", ""),
-            getattr(rna, "filter_glob", ""))
+        name = get_rna_type(op).name
+        op_info = ImporterInfo(name, total_name,
+            get_filename_ext(op, ""),
+            get_filter_glob(op, ""))
         importers.append(op_info)
     
     return importers

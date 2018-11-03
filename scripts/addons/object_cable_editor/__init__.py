@@ -20,7 +20,7 @@
 bl_info = {
     "name": "Cable Editor",
     "author": "dairin0d, moth3r",
-    "version": (0, 5, 1),
+    "version": (0, 5, 2),
     "blender": (2, 7, 0),
     "location": "",
     "description": "Cable editor",
@@ -934,8 +934,12 @@ class CableSettingsPG:
             
             for i in range(n):
                 matrix = Matrix.Translation(Vector((self.wire_offset, (i+0.5)*w_step - bus_halfwidth, 0)))
-                bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=self.wire_resolution, diameter=wire_radius, matrix=matrix)
-                bmesh.ops.create_circle(bm_cap, cap_ends=True, cap_tris=False, segments=self.wire_resolution, diameter=wire_radius, matrix=matrix)
+                try:
+                    bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=self.wire_resolution, diameter=wire_radius, matrix=matrix)
+                    bmesh.ops.create_circle(bm_cap, cap_ends=True, cap_tris=False, segments=self.wire_resolution, diameter=wire_radius, matrix=matrix)
+                except TypeError: # quick fix for Blender 2.79.6
+                    bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=self.wire_resolution, radius=wire_radius, matrix=matrix)
+                    bmesh.ops.create_circle(bm_cap, cap_ends=True, cap_tris=False, segments=self.wire_resolution, radius=wire_radius, matrix=matrix)
         elif wire_type == 'BRAIDED':
             # 1st iteration: find approximate radius
             # 2nd interation: adjust offset so that wire sticks to the outer radius
@@ -970,8 +974,12 @@ class CableSettingsPG:
             
             for i in range(n):
                 matrix = Matrix.Rotation(i*angle_offset, 4, Vector((0, 0, 1))) * matrix0
-                bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=self.wire_resolution, diameter=wire_radius, matrix=matrix)
-                bmesh.ops.create_circle(bm_cap, cap_ends=True, cap_tris=False, segments=self.wire_resolution, diameter=wire_radius, matrix=matrix)
+                try:
+                    bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=self.wire_resolution, diameter=wire_radius, matrix=matrix)
+                    bmesh.ops.create_circle(bm_cap, cap_ends=True, cap_tris=False, segments=self.wire_resolution, diameter=wire_radius, matrix=matrix)
+                except TypeError: # quick fix for Blender 2.79.6
+                    bmesh.ops.create_circle(bm, cap_ends=True, cap_tris=False, segments=self.wire_resolution, radius=wire_radius, matrix=matrix)
+                    bmesh.ops.create_circle(bm_cap, cap_ends=True, cap_tris=False, segments=self.wire_resolution, radius=wire_radius, matrix=matrix)
         
         for id, face in enumerate(bm.faces):
             face.smooth = True
